@@ -9,9 +9,11 @@ RUN apt-get update \
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /srv
+COPY requirements.lock ./
+RUN pip install --require-hashes -r requirements.lock
 COPY pyproject.toml ./
 COPY app ./app
-RUN pip install .
+RUN pip install --no-deps .
 
 RUN useradd --system --uid 10001 --home /srv app && mkdir -p /srv/data && chown app /srv/data
 USER app

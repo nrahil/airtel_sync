@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "30 3 * * 1" # weekly: surface newly published advisories against the locked deps
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -24,18 +27,21 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: backend/pyproject.toml
+          cache-dependency-path: backend/requirements-dev.lock
       - name: Install Tesseract 5
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr && tesseract --version
-      - run: python -m pip install -U pip setuptools && pip install -e ".[dev]"
+      - name: Install locked dependencies
+        run: |
+          python -m pip install --require-hashes -r requirements-dev.lock
+          python -m pip install --no-deps -e .
       - name: ruff
         run: ruff check . && ruff format --check .
       - name: mypy
         run: mypy
       - name: pytest
         run: pytest --cov=app --cov-report=term-missing
-      - name: pip-audit
-        run: pip-audit --skip-editable
+      - name: pip-audit (exact locked versions)
+        run: pip-audit --strict --disable-pip --require-hashes -r requirements-dev.lock
 
   frontend:
     runs-on: ubuntu-24.04
