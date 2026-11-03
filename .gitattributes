@@ -5,3 +5,6 @@
 *.pdf binary
 *.pptx binary
 *.ico binary
+
+# Byte-exact copy of the provided catalogue (CRLF) — content hash must match the original.
+backend/tests/fixtures/catalogue/*.csv -text
