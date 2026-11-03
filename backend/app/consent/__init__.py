@@ -1,0 +1,1 @@
+"""DPDP consent ledger."""

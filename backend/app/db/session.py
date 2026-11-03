@@ -24,8 +24,6 @@ def make_engine(url: str) -> Engine:
     database = parsed.database
     if not database or database == ":memory:":
         kwargs["poolclass"] = StaticPool  # one shared in-memory DB across connections
-    else:
-        Path(database).parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(url, **kwargs)
 
     @event.listens_for(engine, "connect")
@@ -39,6 +37,9 @@ def make_engine(url: str) -> Engine:
 
 def init_db(engine: Engine) -> None:
     """Create tables and guard triggers. Idempotent. (Alembic migrations come with Postgres.)"""
+    database = engine.url.database
+    if engine.url.get_backend_name() == "sqlite" and database and database != ":memory:":
+        Path(database).parent.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(engine)
 
 

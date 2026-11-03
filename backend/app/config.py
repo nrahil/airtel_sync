@@ -12,10 +12,10 @@ from __future__ import annotations
 from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Protocol, Self
+from typing import Annotated, Literal, Protocol, Self
 from zoneinfo import ZoneInfo
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -61,12 +61,27 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # Signed principal tokens (issued after OTP in Phase 6).
+    principal_token_ttl_minutes: Annotated[int, Field(ge=1, le=24 * 60)] = 60
+
+    # Registry lookups: per-minute limits (anti-enumeration) and a timeout.
+    lookup_rate_per_minute: Annotated[int, Field(ge=1)] = 10  # per principal
+    lookup_ip_rate_per_minute: Annotated[int, Field(ge=1)] = 30  # per client IP
+    lookup_timeout_ms: Annotated[int, Field(ge=1)] = 2000
+
+    # Resilience testing only (forbidden in production): simulate a slow/flaky/down registry.
+    lookup_fault_mode: Literal["off", "down", "flaky"] = "off"
+    lookup_latency_ms: Annotated[int, Field(ge=0)] = 0
+    lookup_failure_rate: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+
     @model_validator(mode="after")
     def _production_guards(self) -> Self:
         if self.environment != "production":
             return self
         if self.today_override is not None:
             raise ValueError("TODAY_OVERRIDE must not be set in production")
+        if self.lookup_fault_mode != "off" or self.lookup_latency_ms:
+            raise ValueError("lookup fault injection must be off in production")
         for name in ("master_key", "quote_hmac_key"):
             secret: SecretStr | None = getattr(self, name)
             if secret is None or len(secret.get_secret_value()) < MIN_SECRET_LENGTH:
