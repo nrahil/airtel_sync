@@ -13,6 +13,7 @@ COPY requirements.lock ./
 RUN pip install --require-hashes -r requirements.lock
 COPY pyproject.toml ./
 COPY app ./app
+COPY scripts/__init__.py scripts/load_data.py scripts/audit_data.py ./scripts/
 RUN pip install --no-deps .
 
 RUN useradd --system --uid 10001 --home /srv app && mkdir -p /srv/data && chown app /srv/data

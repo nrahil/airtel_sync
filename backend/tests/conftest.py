@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import shutil
 from collections.abc import Callable
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -11,6 +13,17 @@ from app.startup_checks import TesseractStatus
 
 DATASET_TODAY = date(2026, 7, 15)
 
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+# Small synthetic dataset, committed, so data-layer tests run everywhere (incl. CI).
+FIXTURE_DATA_DIR = BACKEND_DIR / "tests" / "fixtures" / "data"
+# The provided hackathon dataset. Git-ignored, so it is present only on dev machines.
+REAL_DATA_DIR = BACKEND_DIR.parent / "mock_data"
+
+requires_real_dataset = pytest.mark.skipif(
+    not (REAL_DATA_DIR / "smb_leads.csv").is_file(),
+    reason=f"provided dataset not found at {REAL_DATA_DIR} (git-ignored; present on dev machines)",
+)
+
 TESSERACT_OK = TesseractStatus(True, "5.3.0", "Tesseract 5.3.0")
 TESSERACT_MISSING = TesseractStatus(False, None, "Tesseract binary 'tesseract' not found.")
 
@@ -18,7 +31,15 @@ TESSERACT_MISSING = TesseractStatus(False, None, "Tesseract binary 'tesseract' n
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> Any:
     """Keep tests independent of the developer's shell/.env and of cached singletons."""
-    for var in ("TODAY_OVERRIDE", "ENVIRONMENT", "MASTER_KEY", "QUOTE_HMAC_KEY", "GROQ_API_KEY"):
+    for var in (
+        "TODAY_OVERRIDE",
+        "ENVIRONMENT",
+        "MASTER_KEY",
+        "QUOTE_HMAC_KEY",
+        "GROQ_API_KEY",
+        "DATA_DIR",
+        "DATABASE_URL",
+    ):
         monkeypatch.delenv(var, raising=False)
     get_settings.cache_clear()
     get_clock.cache_clear()
@@ -35,3 +56,18 @@ def make_settings() -> Callable[..., Settings]:
         return Settings(_env_file=None, **base)
 
     return _make
+
+
+@pytest.fixture
+def data_dir(tmp_path: Path) -> Path:
+    """A writable copy of the synthetic fixture dataset, for mutation tests."""
+    target = tmp_path / "data"
+    shutil.copytree(FIXTURE_DATA_DIR, target)
+    return target
+
+
+def replace_in_file(path: Path, old: str, new: str, *, count: int = 1) -> None:
+    """Mutate a fixture CSV; fails if ``old`` is absent so a test can't silently pass."""
+    text = path.read_text(encoding="utf-8")
+    assert old in text, f"{old!r} not found in {path.name}"
+    path.write_text(text.replace(old, new, count), encoding="utf-8", newline="")

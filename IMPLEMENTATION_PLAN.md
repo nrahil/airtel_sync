@@ -261,6 +261,7 @@ Other predictors: GSTIN Y 9.6% vs N 2.0%; Udyam Y 8.9% vs N 5.6%; leased line 15
 | Historic bundle: below min employees (P03 ×7, P06 ×1) | 8 |
 | Historic bundle: GSTIN-required product without GSTIN (P03 3, P10 1, P12 2, P14 1, P15 5) | 12 |
 | Historic bundle: P11 without P01/P02/P03 (bought with P05/P06) | 9 |
+| …distinct activated bundles violating ≥1 rule (4 break two rules) | 48 |
 | Activated dates after 2026-07-15 / KYC dates after | 16 / 4 |
 | Duplicated business names | 954 |
 | Udyam Y but GSTIN N | 636 |

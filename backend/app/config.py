@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal, Protocol, Self
 from zoneinfo import ZoneInfo
 
@@ -20,6 +21,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 IST = ZoneInfo("Asia/Kolkata")
 
 MIN_SECRET_LENGTH = 32
+
+# backend/app/config.py -> repo root. Correct for a source checkout; Docker sets DATA_DIR.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
@@ -44,6 +48,11 @@ class Settings(BaseSettings):
 
     # Deterministic "today" for demo/tests.
     today_override: date | None = None
+
+    # Provided read-only dataset (catalogue, registries, leads).
+    data_dir: Path = _REPO_ROOT / "mock_data"
+    # Application state (sessions, quotes, orders, consent, vault). Relative to the CWD.
+    database_url: str = "sqlite:///data/udyam.db"
 
     # Local OCR.
     tesseract_cmd: str = "tesseract"

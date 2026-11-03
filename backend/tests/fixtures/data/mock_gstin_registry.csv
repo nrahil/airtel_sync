@@ -1,0 +1,5 @@
+gstin,legal_name,trade_name,constitution,principal_place_of_business,state,registration_date,status
+27ABCDE1234F1Z0,Test Owner (Prop. Asha Traders),Asha Traders,Proprietorship,"Shop 1, Test Road, Mumbai, Maharashtra - 100001",Maharashtra,2021-01-15,Active
+29PQRSX5678K1ZU,Asha Traders LLP,Asha Traders LLP,Limited Liability Partnership,"Unit 2, Test Lane, Mysuru, Karnataka - 100002",Karnataka,2019-06-01,Cancelled
+07LMNOP4321Q1Z6,Test Office Pvt Ltd,Test Office,Private Limited Company,"Floor 3, Test Plaza, Delhi, Delhi - 100003",Delhi,2022-03-10,Suspended
+24XYZAB1111C1Z8,Test Unit Pvt Ltd,Test Unit,Private Limited Company,"Plot 4, Test Estate, Surat, Gujarat - 100004",Gujarat,2020-11-20,Active

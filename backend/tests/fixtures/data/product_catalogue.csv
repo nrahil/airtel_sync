@@ -1,0 +1,5 @@
+product_id,category,product_name,description,unit,price_min_inr_per_month,price_max_inr_per_month,one_time_setup_inr,min_contract_months,available_city_tiers,min_employees,min_sites,requires_gstin,requires_one_of,typical_install_days,target_segments
+P01,Connectivity,Test Fibre 100,"Synthetic fixture product, 100 Mbps",per site,999,1199,0,12,1;2,1,1,N,,5,micro;prof
+P03,Connectivity,Test Fibre 1G,Synthetic fixture product with tier/size/GSTIN rules,per site,3999,4499,0,12,1,5,1,Y,,7,prof;multi;mfg
+P11,Connectivity,Test Static IP,Synthetic fixture add-on,per IP,200,300,0,12,1;2,1,1,N,P01|P03,1,prof;mfg
+P23,IoT & Physical,Test CCTV,Synthetic fixture add-on with setup fee,per camera,199,299,1800,12,1;2,1,1,N,P01|P03,4,micro;multi;mfg

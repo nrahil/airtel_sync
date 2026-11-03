@@ -9,6 +9,8 @@ services:
       TODAY_OVERRIDE: ${TODAY_OVERRIDE:-2026-07-15}
       TESSERACT_CMD: tesseract
       TESSERACT_REQUIRED: "true"
+      DATA_DIR: /srv/mock_data
+      DATABASE_URL: sqlite:////srv/data/udyam.db
     volumes:
       - ./mock_data:/srv/mock_data:ro # provided dataset — read-only
       - backend-data:/srv/data
