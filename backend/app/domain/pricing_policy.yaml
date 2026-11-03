@@ -1,0 +1,32 @@
+# Pricing policy — business-editable, read with yaml.safe_load and strictly validated.
+#
+# Bump `version` on EVERY change: each quote embeds the version it was priced under,
+# and checkout rejects quotes priced under a different version (they are re-priced).
+#
+# All percentages are basis points (500 = 5 %). Money is integer paise in code.
+# Prices can never leave the catalogue range: the final unit price is clamped to
+# >= price_min_inr_per_month, and list price is price_max_inr_per_month.
+
+version: "2026-07-15.1"
+currency: INR
+list_price: price_max
+gst_rate_bps: 1800          # 18 % GST, shown as its own line
+quote_validity_days: 7
+
+# Contract lengths a customer may *request*. The quoted contract is always at least
+# the longest min_contract_months of any product in the bundle.
+contract_options: [12, 24]
+
+# Discounts stack additively per line, then are capped.
+max_total_discount_bps: 1500
+discounts:
+  long_contract:            # whole bundle
+    min_contract_months: 24
+    percent_bps: 500
+  multi_category:           # whole bundle: >= N distinct catalogue categories
+    min_categories: 3
+    percent_bps: 500
+  volume:                   # per line: qty >= N on per-line / per-user / per-device items
+    min_qty: 5
+    units: ["per line", "per user", "per device"]
+    percent_bps: 500
