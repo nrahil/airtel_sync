@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.11-slim-bookworm
+FROM python:3.15-slim-bookworm
 
 # Local OCR: Tesseract 5 (bookworm ships 5.3) + English and Hindi data.
 RUN apt-get update \
