@@ -144,6 +144,26 @@ class ConsentAction(StrEnum):
     WITHDRAW = "WITHDRAW"
 
 
+class KycStatus(StrEnum):
+    DRAFT = "DRAFT"  # documents being collected; not evaluated yet
+    PASS = "PASS"  # noqa: S105 - not a password  (KYC_VERIFIED)
+    REVIEW = "REVIEW"
+    PENDING = "PENDING"
+    ACTION_NEEDED = "ACTION_NEEDED"
+    FAIL = "FAIL"
+
+
+class ReviewKind(StrEnum):
+    REVIEW = "REVIEW"  # a check needs a human decision
+    HANDOFF = "HANDOFF"  # 3 failed attempts → warm hand-off to partner / field (J7)
+
+
+class ReviewStatus(StrEnum):
+    OPEN = "OPEN"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
 class VaultField(StrEnum):
     NAME = "NAME"
     PHONE = "PHONE"
@@ -227,6 +247,69 @@ class Order(Base):
     updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
 
     quote: Mapped[Quote] = relationship()
+
+
+# ------------------------------------------------------------------ Smart KYC
+
+
+class KycApplication(Base):
+    """One applicant's KYC. Personal data (context, extractions) is sealed, never plain."""
+
+    __tablename__ = "kyc_applications"
+    __table_args__ = (CheckConstraint("failed_attempts >= 0", name="ck_kyc_attempts"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    principal_token: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[KycStatus] = mapped_column(_enum(KycStatus), default=KycStatus.DRAFT)
+    context_sealed: Mapped[bytes] = mapped_column(LargeBinary)
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    handed_off: Mapped[bool] = mapped_column(default=False)
+    # Masked, PII-free verdict (codes, statuses, masked evidence, fix messages).
+    last_verdict: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
+
+    documents: Mapped[list[KycDocument]] = relationship(
+        back_populates="application", cascade="all, delete-orphan"
+    )
+    review_items: Mapped[list[KycReviewItem]] = relationship(back_populates="application")
+
+
+class KycDocument(Base):
+    """One document per slot. Image bytes live encrypted in the blob store."""
+
+    __tablename__ = "kyc_documents"
+    __table_args__ = (UniqueConstraint("application_id", "slot"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    application_id: Mapped[str] = mapped_column(ForeignKey("kyc_applications.id"), index=True)
+    slot: Mapped[str] = mapped_column(String(32))
+    source: Mapped[str] = mapped_column(String(16))  # OCR | MANUAL | LOOKUP
+    blob_key: Mapped[str | None] = mapped_column(String(64))  # None for manual/lookup
+    image_sha256: Mapped[str | None] = mapped_column(String(HASH_LEN))
+    extraction_sealed: Mapped[bytes] = mapped_column(LargeBinary)
+    uploaded_at: Mapped[datetime] = mapped_column(default=_now)
+    expires_at: Mapped[datetime | None]  # raw-image retention deadline (Phase 9 job)
+
+    application: Mapped[KycApplication] = relationship(back_populates="documents")
+
+
+class KycReviewItem(Base):
+    """Human review queue entry. Holds reason codes only — reviewers open the sealed data."""
+
+    __tablename__ = "kyc_review_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    application_id: Mapped[str] = mapped_column(ForeignKey("kyc_applications.id"), index=True)
+    kind: Mapped[ReviewKind] = mapped_column(_enum(ReviewKind))
+    reasons: Mapped[list[str]] = mapped_column(JSON)
+    status: Mapped[ReviewStatus] = mapped_column(_enum(ReviewStatus), default=ReviewStatus.OPEN)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    resolved_at: Mapped[datetime | None]
+    resolved_by: Mapped[str | None] = mapped_column(String(64))
+    note: Mapped[str | None] = mapped_column(String(500))
+
+    application: Mapped[KycApplication] = relationship(back_populates="review_items")
 
 
 # ------------------------------------------------------------------ append-only logs

@@ -125,7 +125,7 @@
 | ID | Specimen | Expected overall | Required reason codes |
 |---|---|---|---|
 | KG-01 | K01 | FAIL | `GSTIN_CANCELLED`, `UDYAM_NUMBER_MISSING` |
-| KG-02 | K02 | PASS | `DESKEWED`, `GSTIN_OCR_CORRECTED` |
+| KG-02 | K02 | PASS | `DESKEWED` (the certificate prints `O`; read correctly after deskew, so no repair to disclose) |
 | KG-03 | K03 | PASS | — |
 | KG-04 | K04 | ACTION_NEEDED | `IMAGE_TOO_BLURRY` |
 | KG-05 | K05 | ACTION_NEEDED | `DOCUMENT_MISSING:UDYAM` (lookup offered) |

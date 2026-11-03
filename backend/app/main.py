@@ -14,8 +14,11 @@ from sqlalchemy.orm import sessionmaker
 from app import __version__
 from app.api import health
 from app.api.v1 import router as v1_router
-from app.config import Settings, get_settings
+from app.config import Settings, build_clock, get_settings
 from app.db.session import init_db, make_engine
+from app.kyc.ocr import TesseractEngine
+from app.kyc.service import KycService
+from app.kyc.storage import BlobStore, sealer_from
 from app.lookups.registry import FaultInjector, RegistryProvider
 from app.lookups.service import LookupService
 from app.security.pii_mask import install_pii_log_masking
@@ -64,20 +67,37 @@ def create_app(
     app.state.principal_tokens = principal_tokens_from(
         master, ttl=timedelta(minutes=cfg.principal_token_ttl_minutes), production=is_prod
     )
-    app.state.lookup_service = LookupService(
-        RegistryProvider(cfg.data_dir),
-        FaultInjector(
-            mode=cfg.lookup_fault_mode,
-            latency_ms=cfg.lookup_latency_ms,
-            failure_rate=cfg.lookup_failure_rate,
-            timeout_ms=cfg.lookup_timeout_ms,
-        ),
+    registries = RegistryProvider(cfg.data_dir)
+    faults = FaultInjector(
+        mode=cfg.lookup_fault_mode,
+        latency_ms=cfg.lookup_latency_ms,
+        failure_rate=cfg.lookup_failure_rate,
+        timeout_ms=cfg.lookup_timeout_ms,
+    )
+    app.state.lookup_service = LookupService(registries, faults)
+    sealer = sealer_from(master, production=is_prod)
+    app.state.kyc_service = KycService(
+        blobs=BlobStore(cfg.kyc_storage_dir, sealer),
+        sealer=sealer,
+        engine=TesseractEngine(cfg.tesseract_cmd),
+        registries=registries,
+        faults=faults,
+        clock=build_clock(cfg),
+        retention_days=cfg.kyc_raw_image_retention_days,
+        handoff_after=cfg.kyc_handoff_after_failures,
     )
     app.state.lookup_ip_limiter = SlidingWindowLimiter(
         limit=cfg.lookup_ip_rate_per_minute, window_seconds=60
     )
     app.state.lookup_principal_limiter = SlidingWindowLimiter(
         limit=cfg.lookup_rate_per_minute, window_seconds=60
+    )
+
+    app.state.kyc_ip_limiter = SlidingWindowLimiter(
+        limit=cfg.kyc_ip_rate_per_minute, window_seconds=60
+    )
+    app.state.kyc_principal_limiter = SlidingWindowLimiter(
+        limit=cfg.kyc_upload_rate_per_minute, window_seconds=60
     )
 
     app.add_middleware(

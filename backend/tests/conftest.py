@@ -112,3 +112,7 @@ def replace_in_file(path: Path, old: str, new: str, *, count: int = 1) -> None:
     text = path.read_text(encoding="utf-8")
     assert old in text, f"{old!r} not found in {path.name}"
     path.write_text(text.replace(old, new, count), encoding="utf-8", newline="")
+
+
+# KYC app fixtures live in tests/kyc_helpers.py; re-exported so every suite can use them.
+from tests.kyc_helpers import kyc_client, make_kyc_app  # noqa: E402, F401

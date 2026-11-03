@@ -74,6 +74,13 @@ class Settings(BaseSettings):
     lookup_latency_ms: Annotated[int, Field(ge=0)] = 0
     lookup_failure_rate: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
 
+    # Smart KYC: encrypted blob store (relative to the CWD, like the DB), limits, retention.
+    kyc_storage_dir: Path = Path("data/kyc_blobs")
+    kyc_upload_rate_per_minute: Annotated[int, Field(ge=1)] = 20  # per principal
+    kyc_ip_rate_per_minute: Annotated[int, Field(ge=1)] = 60  # per client IP
+    kyc_raw_image_retention_days: Annotated[int, Field(ge=1, le=90)] = 7
+    kyc_handoff_after_failures: Annotated[int, Field(ge=1, le=10)] = 3
+
     @model_validator(mode="after")
     def _production_guards(self) -> Self:
         if self.environment != "production":
