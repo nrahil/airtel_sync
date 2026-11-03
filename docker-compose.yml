@@ -1,0 +1,38 @@
+services:
+  backend:
+    build: ./backend
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      TODAY_OVERRIDE: ${TODAY_OVERRIDE:-2026-07-15}
+      TESSERACT_CMD: tesseract
+      TESSERACT_REQUIRED: "true"
+    volumes:
+      - ./mock_data:/srv/mock_data:ro # provided dataset — read-only
+      - backend-data:/srv/data
+    ports:
+      - "8000:8000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache:uid=1000,gid=1000
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  backend-data:

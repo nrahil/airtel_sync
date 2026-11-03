@@ -1,0 +1,40 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime data: DB, uploads, KYC blobs, model artefacts
+*.db
+*.sqlite
+*.sqlite3
+backend/data/
+uploads/
+backend/uploads/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+
+# Node / Next (see also frontend/.gitignore)
+node_modules/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+PHASE_WISE.MD
+ARCHITECTURE.MD
+Airtel_SYNC_Case.pdf
+mock_data

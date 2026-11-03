@@ -1,0 +1,130 @@
+"""Application settings and the single injectable clock.
+
+Every date rule in the system (90-day address proof, ID validity, quote expiry,
+SLA breach, analytics cut-offs) must read "today" from :func:`get_clock` — never
+from ``date.today()`` / ``datetime.now()`` directly. ``TODAY_OVERRIDE`` pins the
+calendar date so the demo and the test-suite are deterministic (dataset
+"today" = 2026-07-15).
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+from functools import lru_cache
+from typing import Literal, Protocol, Self
+from zoneinfo import ZoneInfo
+
+from pydantic import SecretStr, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+IST = ZoneInfo("Asia/Kolkata")
+
+MIN_SECRET_LENGTH = 32
+
+
+class Settings(BaseSettings):
+    """Runtime configuration, read from environment variables (and ``.env`` in dev)."""
+
+    model_config = SettingsConfigDict(
+        env_file=(".env", "../.env"),
+        env_file_encoding="utf-8",
+        env_ignore_empty=True,  # `TODAY_OVERRIDE=` means "not set"
+        extra="ignore",
+    )
+
+    environment: Literal["development", "test", "production"] = "development"
+
+    # LLM (Groq) — only redacted advisor text is ever sent.
+    groq_api_key: SecretStr | None = None
+    groq_model: str = "llama-3.3-70b-versatile"
+
+    # Crypto material — env only, never committed.
+    master_key: SecretStr | None = None
+    quote_hmac_key: SecretStr | None = None
+
+    # Deterministic "today" for demo/tests.
+    today_override: date | None = None
+
+    # Local OCR.
+    tesseract_cmd: str = "tesseract"
+    tesseract_required: bool = True
+    tesseract_min_major: int = 5
+
+    cors_origins: list[str] = ["http://localhost:3000"]
+
+    @model_validator(mode="after")
+    def _production_guards(self) -> Self:
+        if self.environment != "production":
+            return self
+        if self.today_override is not None:
+            raise ValueError("TODAY_OVERRIDE must not be set in production")
+        for name in ("master_key", "quote_hmac_key"):
+            secret: SecretStr | None = getattr(self, name)
+            if secret is None or len(secret.get_secret_value()) < MIN_SECRET_LENGTH:
+                raise ValueError(
+                    f"{name.upper()} must be set to at least {MIN_SECRET_LENGTH} characters "
+                    "in production"
+                )
+        return self
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()
+
+
+# ---------------------------------------------------------------------- clock
+
+
+class Clock(Protocol):
+    def now(self) -> datetime:
+        """Timezone-aware current instant (IST)."""
+        ...
+
+    def today(self) -> date:
+        """Current business date in India."""
+        ...
+
+
+class SystemClock:
+    """Real wall-clock time in IST."""
+
+    def __init__(self, tz: ZoneInfo = IST) -> None:
+        self._tz = tz
+
+    def now(self) -> datetime:
+        return datetime.now(self._tz)
+
+    def today(self) -> date:
+        return self.now().date()
+
+
+class FixedDateClock:
+    """Pins the calendar date; time-of-day keeps running so TTLs and expiries still move."""
+
+    def __init__(self, fixed: date, tz: ZoneInfo = IST) -> None:
+        self._fixed = fixed
+        self._tz = tz
+
+    def now(self) -> datetime:
+        return datetime.combine(self._fixed, datetime.now(self._tz).timetz())
+
+    def today(self) -> date:
+        return self._fixed
+
+
+def build_clock(settings: Settings) -> Clock:
+    if settings.today_override is not None:
+        return FixedDateClock(settings.today_override)
+    return SystemClock()
+
+
+@lru_cache(maxsize=1)
+def get_clock() -> Clock:
+    """FastAPI dependency / module accessor. Override in tests via ``dependency_overrides``."""
+    return build_clock(get_settings())
+
+
+def today() -> date:
+    """Convenience for non-request code (scripts, jobs)."""
+    return get_clock().today()

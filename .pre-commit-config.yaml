@@ -1,0 +1,49 @@
+# Install once:  backend/.venv/Scripts/pre-commit install   (or bin/pre-commit on Linux/macOS)
+# Provided dataset and case files are read-only: never let hooks rewrite them.
+exclude: ^(mock_data/|README\.md$|.*\.(pdf|pptx)$)
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=1500"]
+      - id: detect-private-key
+      - id: check-merge-conflict
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.3
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+        files: ^backend/
+      - id: ruff-format
+        files: ^backend/
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (backend)
+        language: system
+        entry: >-
+          bash -c 'cd backend &&
+          P=python; for c in .venv/Scripts/python .venv/bin/python; do [ -x "$c" ] && P=$c; done;
+          "$P" -m mypy'
+        files: ^backend/.*\.py$
+        pass_filenames: false
+      - id: eslint
+        name: eslint (frontend)
+        language: system
+        entry: bash -c 'cd frontend && npm run --silent lint'
+        files: ^frontend/.*\.(ts|tsx|js|mjs)$
+        pass_filenames: false
+      - id: tsc
+        name: tsc (frontend)
+        language: system
+        entry: bash -c 'cd frontend && npm run --silent typecheck'
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
