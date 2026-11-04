@@ -20,13 +20,14 @@ dependencies = [
     "numpy>=2.1,<3",             # blur / skew / glyph segmentation (no OpenCV needed)
     "pypdfium2>=4.30,<6",        # server-side PDF rasterisation (drops embedded JS)
     "cryptography>=44,<51",      # AES-256-GCM sealing of KYC blobs and extractions
+    # Advisor (Phase 5)
+    "httpx>=0.27,<1",            # Groq chat-completions client (timeouts, retries)
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.3,<10",
     "pytest-cov>=6,<8",
-    "httpx>=0.27,<1",            # FastAPI TestClient
     "hypothesis>=6.100,<7",      # property tests (pricing)
     "types-pyyaml>=6.0.12,<7",
     "ruff>=0.6,<1",
@@ -37,6 +38,7 @@ dev = [
 
 [tool.setuptools.package-data]
 "app.domain" = ["*.yaml"]
+"app.advisor" = ["prompts/*.txt", "templates/*.json"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

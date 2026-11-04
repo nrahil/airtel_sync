@@ -33,11 +33,16 @@ MakeApp = Callable[..., FastAPI]
 
 
 def kyc_data_dir(tmp_path: Path) -> Path:
-    """Fixture dataset whose registries are the specimen registry subset."""
+    """Fixture dataset with the specimen registry subset and the full catalogue."""
     target = tmp_path / "data"
     shutil.copytree(FIXTURE_DATA_DIR, target)
     shutil.copy(KYC_FIXTURES / "gstin_registry.csv", target / "mock_gstin_registry.csv")
     shutil.copy(KYC_FIXTURES / "udyam_registry.csv", target / "mock_udyam_registry.csv")
+    # The real 25-product catalogue (a superset of the fixture one) for advisor journeys.
+    shutil.copy(
+        _TESTS / "fixtures" / "catalogue" / "product_catalogue.csv",
+        target / "product_catalogue.csv",
+    )
     return target
 
 

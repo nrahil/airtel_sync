@@ -1,0 +1,70 @@
+{
+  "languageName": "English",
+  "advisor": {
+    "title": "Find your business plan",
+    "subtitle": "A few quick questions — then one clear monthly price.",
+    "privacy": "Anonymous until checkout. Please don't type ID or phone numbers here.",
+    "placeholder": "Tell me about your business…",
+    "send": "Send",
+    "voice": "Speak",
+    "listening": "Listening…",
+    "useForm": "Answer with quick options instead",
+    "next": "Next",
+    "yes": "Yes",
+    "no": "No",
+    "cityPlaceholder": "City name",
+    "numberPlaceholder": "Enter a number",
+    "selectAny": "Pick any that apply",
+    "noneOfThese": "None of these",
+    "restart": "Start again",
+    "error": "Something went wrong. Please try again.",
+    "thinking": "Thinking…"
+  },
+  "segment": {
+    "micro": "Shop or local service",
+    "prof": "Professional office",
+    "multi": "Several branches",
+    "mfg": "Workshop or factory"
+  },
+  "internet": {
+    "business_broadband": "Business broadband",
+    "home_broadband": "Home broadband",
+    "mobile_hotspot": "Mobile hotspot",
+    "leased_line": "Leased line",
+    "mixed": "Different at each site",
+    "none": "No internet"
+  },
+  "needs": {
+    "internet": "Internet",
+    "mobile_lines": "Mobile lines",
+    "whatsapp": "WhatsApp for business",
+    "sms": "Bulk SMS",
+    "email": "Business email",
+    "backup": "Cloud backup",
+    "website": "Website",
+    "pos": "Card / UPI payments (POS)",
+    "security": "Cyber security",
+    "wifi": "Wi-Fi",
+    "cctv": "CCTV",
+    "iot": "Machine sensors (IoT)",
+    "fleet": "Vehicle tracking",
+    "telephony": "Office phone lines",
+    "failover": "Backup internet",
+    "static_ip": "Static IP"
+  },
+  "quote": {
+    "title": "Your recommended plan",
+    "monthlyTotal": "Monthly total",
+    "perMonth": "/month",
+    "setup": "One-time setup",
+    "gstIncluded": "incl. GST",
+    "contract": "Contract",
+    "months": "months",
+    "qty": "Qty",
+    "notIncluded": "Not included yet",
+    "tryInstead": "Try instead",
+    "why": "Why this plan",
+    "aiNote": "Explained by AI from your plan's facts",
+    "templateNote": "Standard explanation"
+  }
+}

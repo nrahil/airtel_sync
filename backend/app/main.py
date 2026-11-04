@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import sessionmaker
 
 from app import __version__
+from app.advisor.groq_client import llm_from
 from app.api import health
 from app.api.v1 import router as v1_router
 from app.config import Settings, build_clock, get_settings
@@ -93,6 +94,16 @@ def create_app(
         limit=cfg.lookup_rate_per_minute, window_seconds=60
     )
 
+    app.state.llm = llm_from(
+        cfg.groq_api_key.get_secret_value() if cfg.groq_api_key else None,
+        model=cfg.groq_model,
+        base_url=cfg.groq_base_url,
+        timeout_seconds=cfg.groq_timeout_seconds,
+        max_tokens=cfg.groq_max_tokens,
+    )
+    app.state.advisor_ip_limiter = SlidingWindowLimiter(
+        limit=cfg.advisor_rate_per_minute, window_seconds=60
+    )
     app.state.kyc_ip_limiter = SlidingWindowLimiter(
         limit=cfg.kyc_ip_rate_per_minute, window_seconds=60
     )

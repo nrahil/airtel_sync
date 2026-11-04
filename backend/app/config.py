@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # LLM (Groq) — only redacted advisor text is ever sent.
     groq_api_key: SecretStr | None = None
     groq_model: str = "llama-3.3-70b-versatile"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_timeout_seconds: Annotated[float, Field(gt=0, le=30)] = 8.0
+    groq_max_tokens: Annotated[int, Field(ge=16, le=2048)] = 400
+    # Advisor guard-rails (LLM04 cost / DoS, LL-11 caps).
+    advisor_max_turns: Annotated[int, Field(ge=1, le=100)] = 20
+    advisor_max_message_chars: Annotated[int, Field(ge=10, le=4000)] = 500
+    advisor_rate_per_minute: Annotated[int, Field(ge=1)] = 30  # per client IP
 
     # Crypto material — env only, never committed.
     master_key: SecretStr | None = None

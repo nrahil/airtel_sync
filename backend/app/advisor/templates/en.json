@@ -1,0 +1,40 @@
+{
+  "questions": {
+    "segment": "What kind of business do you run — a shop or service, a professional office, several branches, or a workshop/factory?",
+    "city": "Which city is your business in?",
+    "employee_count": "How many people work in your business?",
+    "num_sites": "How many locations or branches do you have?",
+    "has_gstin": "Is your business registered for GST?",
+    "current_internet": "What internet do you use today — business broadband, home broadband, a mobile hotspot, a leased line, or none?",
+    "needs": "Anything else you need — WhatsApp for business, a website, POS, CCTV, Wi-Fi, backup or phone lines? You can also say no."
+  },
+  "notices": {
+    "WELCOME": "Hi! I'll ask a few quick questions and suggest the right plan for your business. Please don't share ID numbers or phone numbers here.",
+    "CITY_UNKNOWN": "I don't know that city yet. Could you tell me the nearest big city?",
+    "INVALID_VALUE": "That doesn't look right — could you check it?",
+    "INJECTION_REFUSED": "I can only help you choose a plan; I can't change prices or share internal information. Let's continue.",
+    "LLM_UNAVAILABLE": "Switching to quick questions so you can carry on.",
+    "TURN_LIMIT": "Let's finish with a few quick questions.",
+    "MESSAGE_TOO_LONG": "That message is a bit long — please keep it short.",
+    "LANGUAGE_FALLBACK": "Sorry, I'll continue in English for now.",
+    "PII_REMOVED": "I removed an ID or contact number from your message — you won't need it until checkout.",
+    "DONE": "Here is the plan I recommend."
+  },
+  "reasons": {
+    "TIER_NOT_SERVED": "not available in your city yet",
+    "BELOW_MIN_EMPLOYEES": "needs a larger team",
+    "BELOW_MIN_SITES": "needs more locations",
+    "GSTIN_REQUIRED": "needs a GST registration",
+    "GSTIN_CANCELLED": "your GSTIN is cancelled",
+    "GSTIN_SUSPENDED": "your GSTIN is suspended",
+    "GSTIN_UNVERIFIED": "unlocks once your GSTIN is verified at checkout",
+    "DEPENDENCY_MISSING": "needs a compatible internet connection",
+    "FIBRE_NOT_FEASIBLE": "fibre isn't available at your address",
+    "QTY_INVALID": "quantity not allowed"
+  },
+  "explanation": {
+    "intro": "Based on what you told me, I recommend:",
+    "total": "That is ₹{monthly} per month plus ₹{setup} one-time setup, on a {months}-month contract (GST included).",
+    "blocked": "Not included: {items}."
+  }
+}

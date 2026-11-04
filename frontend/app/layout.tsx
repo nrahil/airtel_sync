@@ -18,7 +18,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    // `lang` becomes the active locale once next-intl lands (Phase 5).
+    // Each localized page sets `lang` on its <main>; the shell itself is English.
     <html lang="en">
       <body className="antialiased">
         {children}
