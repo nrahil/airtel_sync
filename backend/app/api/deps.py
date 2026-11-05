@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections.abc import Callable, Iterator
-from typing import Annotated, Any
+from typing import Annotated, Any, Final
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -17,6 +18,8 @@ from app.security.principal import InvalidPrincipalTokenError
 from app.security.rate_limit import SlidingWindowLimiter
 
 security_log = logging.getLogger("udyam.security")
+
+IDEMPOTENCY_KEY_RE: Final = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 
 
 def get_db(request: Request) -> Iterator[Session]:
@@ -63,10 +66,8 @@ def authenticate(request: Request, authorization: str | None, clock: Clock) -> s
     return principal
 
 
-def guarded(
-    purpose: ConsentPurpose, *, ip_limiter: str, principal_limiter: str
-) -> Callable[..., str]:
-    """Dependency enforcing, in order: IP limit → token → per-person limit → consent.
+def authenticated(*, ip_limiter: str, principal_limiter: str) -> Callable[..., str]:
+    """Dependency: IP limit → Bearer principal token → per-person limit. No consent check.
 
     Limiters are looked up on ``app.state`` by attribute name so each app instance
     (and each test) has its own counters.
@@ -74,7 +75,6 @@ def guarded(
 
     def dependency(
         request: Request,
-        db: Annotated[Session, Depends(get_db)],
         clock: Annotated[Clock, Depends(get_clock)],
         authorization: Annotated[str | None, Header()] = None,
     ) -> str:
@@ -82,6 +82,23 @@ def guarded(
         _enforce(getattr(state, ip_limiter), f"ip:{client_ip(request)}", "ip")
         principal = authenticate(request, authorization, clock)
         _enforce(getattr(state, principal_limiter), f"p:{principal}", "principal")
+        return principal
+
+    return dependency
+
+
+def guarded(
+    purpose: ConsentPurpose, *, ip_limiter: str, principal_limiter: str
+) -> Callable[..., str]:
+    """Dependency enforcing, in order: IP limit → token → per-person limit → consent."""
+    auth = authenticated(ip_limiter=ip_limiter, principal_limiter=principal_limiter)
+
+    def dependency(
+        db: Annotated[Session, Depends(get_db)],
+        clock: Annotated[Clock, Depends(get_clock)],
+        # Default-value form: a closure-local name can't be resolved from a string annotation.
+        principal: str = Depends(auth),
+    ) -> str:
         if not ConsentLedger(db, clock).is_granted(principal, purpose):
             security_log.info("consent missing purpose=%s", purpose.value)
             raise _error(
@@ -91,3 +108,14 @@ def guarded(
         return principal
 
     return dependency
+
+
+def require_idempotency_key(
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> str:
+    """``Idempotency-Key`` header: 16-128 chars of ``[A-Za-z0-9_-]`` (a UUID works)."""
+    if idempotency_key is None:
+        raise _error(status.HTTP_400_BAD_REQUEST, {"code": "IDEMPOTENCY_KEY_REQUIRED"})
+    if not IDEMPOTENCY_KEY_RE.fullmatch(idempotency_key):
+        raise _error(status.HTTP_400_BAD_REQUEST, {"code": "IDEMPOTENCY_KEY_INVALID"})
+    return idempotency_key

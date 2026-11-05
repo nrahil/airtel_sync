@@ -203,6 +203,13 @@ def build_quote(
 
 def verify_quote(quote: Quote, signer: QuoteSigner, *, now: datetime) -> None:
     """Integrity first (any edited field ⇒ tampered), then expiry (J4)."""
+    verify_integrity(quote, signer)
+    if now >= quote.valid_until:
+        raise QuoteExpiredError(f"quote expired at {quote.valid_until.isoformat()}")
+
+
+def verify_integrity(quote: Quote, signer: QuoteSigner) -> None:
+    """Content hash and HMAC only — for an accepted quote whose price is already locked."""
     recomputed = _content_hash(quote.model_dump(mode="json"))
     if not hmac.compare_digest(recomputed, quote.content_hash):
         raise QuoteTamperedError("quote content does not match its hash")
@@ -211,8 +218,6 @@ def verify_quote(quote: Quote, signer: QuoteSigner, *, now: datetime) -> None:
     )
     if not signer.verify(message, quote.signature):
         raise QuoteTamperedError("quote signature is invalid")
-    if now >= quote.valid_until:
-        raise QuoteExpiredError(f"quote expired at {quote.valid_until.isoformat()}")
 
 
 def revalidate_quote(

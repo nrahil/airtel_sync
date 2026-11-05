@@ -83,6 +83,14 @@ class ConsentLedger:
     ) -> ConsentEvent:
         return self._append(principal, purpose, ConsentAction.WITHDRAW, notice_version, locale)
 
+    def latest(self, principal: str, purpose: ConsentPurpose) -> ConsentEvent | None:
+        return self.session.scalar(
+            select(ConsentEvent)
+            .where(ConsentEvent.principal_token == principal, ConsentEvent.purpose == purpose)
+            .order_by(ConsentEvent.id.desc())
+            .limit(1)
+        )
+
     def is_granted(self, principal: str, purpose: ConsentPurpose) -> bool:
         latest = self.session.scalar(
             select(ConsentEvent.action)

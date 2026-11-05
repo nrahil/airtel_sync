@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { QuestionForm } from "@/components/advisor/QuestionForm";
@@ -10,6 +11,7 @@ import {
   type Question,
   type Recommendation,
   type TurnResponse,
+  createQuote,
   sendAnswer,
   sendText,
   startSession,
@@ -38,6 +40,20 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+
+  const customise = async () => {
+    if (!sessionId || busy) return;
+    setBusy(true);
+    setError(false);
+    try {
+      const quote = await createQuote(sessionId);
+      router.push(`/${locale}/quote?q=${encodeURIComponent(quote.quote_id)}`);
+    } catch {
+      setError(true);
+      setBusy(false);
+    }
+  };
 
   const apply = useCallback(
     (res: TurnResponse, userText?: string) => {
@@ -145,7 +161,17 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
       )}
 
       {recommendation && (
-        <RecommendationCard recommendation={recommendation} locale={locale} t={t} />
+        <>
+          <RecommendationCard recommendation={recommendation} locale={locale} t={t} />
+          <button
+            type="button"
+            onClick={() => void customise()}
+            disabled={busy || !sessionId}
+            className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50"
+          >
+            {t.quote.customise}
+          </button>
+        </>
       )}
 
       {question && !recommendation && (

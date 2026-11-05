@@ -88,6 +88,20 @@ class Settings(BaseSettings):
     kyc_raw_image_retention_days: Annotated[int, Field(ge=1, le=90)] = 7
     kyc_handoff_after_failures: Annotated[int, Field(ge=1, le=10)] = 3
 
+    # Mock phone OTP (identity at checkout): expiry, lockout, per-phone and per-IP limits.
+    otp_ttl_seconds: Annotated[int, Field(ge=60, le=900)] = 300
+    otp_max_attempts: Annotated[int, Field(ge=1, le=10)] = 5
+    otp_requests_per_window: Annotated[int, Field(ge=1)] = 3  # per phone
+    otp_window_seconds: Annotated[int, Field(ge=60)] = 600
+    otp_ip_rate_per_minute: Annotated[int, Field(ge=1)] = 10
+
+    # Quotes (anonymous, per IP) and checkout (consents, orders, payments).
+    quote_rate_per_minute: Annotated[int, Field(ge=1)] = 60  # per client IP
+    checkout_ip_rate_per_minute: Annotated[int, Field(ge=1)] = 60
+    checkout_rate_per_minute: Annotated[int, Field(ge=1)] = 30  # per principal
+    # Mock payment gateway: random decline rate (resilience testing; 0 in production).
+    payment_failure_rate: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+
     @model_validator(mode="after")
     def _production_guards(self) -> Self:
         if self.environment != "production":
@@ -96,6 +110,8 @@ class Settings(BaseSettings):
             raise ValueError("TODAY_OVERRIDE must not be set in production")
         if self.lookup_fault_mode != "off" or self.lookup_latency_ms:
             raise ValueError("lookup fault injection must be off in production")
+        if self.payment_failure_rate:
+            raise ValueError("payment failure simulation must be off in production")
         for name in ("master_key", "quote_hmac_key"):
             secret: SecretStr | None = getattr(self, name)
             if secret is None or len(secret.get_secret_value()) < MIN_SECRET_LENGTH:

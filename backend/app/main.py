@@ -15,6 +15,7 @@ from app import __version__
 from app.advisor.groq_client import llm_from
 from app.api import health
 from app.api.v1 import router as v1_router
+from app.checkout.otp import MockSmsSender, OtpService, otp_keys_from
 from app.config import Settings, build_clock, get_settings
 from app.db.session import init_db, make_engine
 from app.kyc.ocr import TesseractEngine
@@ -109,6 +110,28 @@ def create_app(
     )
     app.state.kyc_principal_limiter = SlidingWindowLimiter(
         limit=cfg.kyc_upload_rate_per_minute, window_seconds=60
+    )
+
+    app.state.otp_service = OtpService(
+        otp_keys_from(master, production=is_prod),
+        MockSmsSender(),
+        ttl=timedelta(seconds=cfg.otp_ttl_seconds),
+        max_attempts=cfg.otp_max_attempts,
+    )
+    app.state.otp_ip_limiter = SlidingWindowLimiter(
+        limit=cfg.otp_ip_rate_per_minute, window_seconds=60
+    )
+    app.state.otp_phone_limiter = SlidingWindowLimiter(
+        limit=cfg.otp_requests_per_window, window_seconds=cfg.otp_window_seconds
+    )
+    app.state.quote_ip_limiter = SlidingWindowLimiter(
+        limit=cfg.quote_rate_per_minute, window_seconds=60
+    )
+    app.state.checkout_ip_limiter = SlidingWindowLimiter(
+        limit=cfg.checkout_ip_rate_per_minute, window_seconds=60
+    )
+    app.state.checkout_principal_limiter = SlidingWindowLimiter(
+        limit=cfg.checkout_rate_per_minute, window_seconds=60
     )
 
     app.add_middleware(

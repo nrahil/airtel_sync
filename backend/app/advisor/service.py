@@ -131,6 +131,32 @@ def prompt(name: str) -> str:
     return resources.files("app.advisor").joinpath("prompts", f"{name}.txt").read_text("utf-8")
 
 
+class ProfileIncompleteError(ValueError):
+    """The advisor has not yet collected every fact the engines need."""
+
+
+def profile_from_slots(slots: Slots) -> BusinessProfile:
+    """The engines' profile from advisor slots — the one place this mapping lives."""
+    if (
+        slots.segment is None
+        or slots.employee_count is None
+        or slots.num_sites is None
+        or slots.city_tier not in (1, 2)
+    ):
+        raise ProfileIncompleteError("profile is incomplete")
+    return BusinessProfile.model_validate(
+        {
+            "segment": slots.segment,
+            "employee_count": slots.employee_count,
+            "num_sites": slots.num_sites,
+            "city_tier": slots.city_tier,
+            # Claimed GSTINs stay UNVERIFIED until KYC confirms them in the registry.
+            "gstin_state": GstinState.UNVERIFIED if slots.has_gstin else GstinState.NONE,
+            "needs": frozenset(slots.needs or ()),
+        }
+    )
+
+
 def _rupees(paise: int) -> int:
     return (paise + 50) // 100
 
@@ -317,24 +343,7 @@ class AdvisorService:
     # -------------------------------------------------------------- recommendation
 
     def profile(self, slots: Slots) -> BusinessProfile:
-        if (
-            slots.segment is None
-            or slots.employee_count is None
-            or slots.num_sites is None
-            or slots.city_tier not in (1, 2)
-        ):
-            raise ValueError("profile is incomplete")
-        return BusinessProfile.model_validate(
-            {
-                "segment": slots.segment,
-                "employee_count": slots.employee_count,
-                "num_sites": slots.num_sites,
-                "city_tier": slots.city_tier,
-                # Claimed GSTINs stay UNVERIFIED until KYC confirms them in the registry.
-                "gstin_state": GstinState.UNVERIFIED if slots.has_gstin else GstinState.NONE,
-                "needs": frozenset(slots.needs or ()),
-            }
-        )
+        return profile_from_slots(slots)
 
     async def _recommend(self, state: State, *, use_llm: bool = True) -> dict[str, Any]:
         profile = self.profile(state.slots)

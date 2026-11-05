@@ -139,6 +139,11 @@ class ConsentPurpose(StrEnum):
     MARKETING = "MARKETING"
 
 
+class PaymentStatus(StrEnum):
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
 class ConsentAction(StrEnum):
     GRANT = "GRANT"
     WITHDRAW = "WITHDRAW"
@@ -218,7 +223,11 @@ class Quote(Base):
     status: Mapped[QuoteStatus] = mapped_column(_enum(QuoteStatus), default=QuoteStatus.ISSUED)
     policy_version: Mapped[str] = mapped_column(String(32))
     catalogue_hash: Mapped[str] = mapped_column(String(HASH_LEN))
+    profile_fingerprint: Mapped[str] = mapped_column(String(HASH_LEN))
+    content_hash: Mapped[str] = mapped_column(String(HASH_LEN))
     items: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    # The full signed domain quote (``app.domain.quotes.Quote``) — re-verified at checkout.
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
     monthly_total_paise: Mapped[int] = mapped_column(BigInteger)
     setup_total_paise: Mapped[int] = mapped_column(BigInteger)
     gst_paise: Mapped[int] = mapped_column(BigInteger)
@@ -231,14 +240,18 @@ class Quote(Base):
 
 
 class Order(Base):
-    """Checkout result. Access needs the unguessable id *and* the owning principal."""
+    """Checkout result. Access needs the unguessable id *and* the owning principal.
+
+    ``idempotency_key`` stores SHA-256(principal | client key), so keys are scoped per
+    person and the raw client value is never kept.
+    """
 
     __tablename__ = "orders"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     quote_id: Mapped[str] = mapped_column(ForeignKey("quotes.id"), unique=True)
     principal_token: Mapped[str] = mapped_column(String(64), index=True)
-    idempotency_key: Mapped[str] = mapped_column(String(128), unique=True)
+    idempotency_key: Mapped[str] = mapped_column(String(HASH_LEN), unique=True)
     state: Mapped[OrderState] = mapped_column(_enum(OrderState))
     kyc_verified_on: Mapped[date | None]
     eta: Mapped[date | None]
@@ -247,6 +260,60 @@ class Order(Base):
     updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
 
     quote: Mapped[Quote] = relationship()
+    payments: Mapped[list[Payment]] = relationship(
+        back_populates="order", order_by="Payment.attempt"
+    )
+
+
+class Payment(Base):
+    """One mock payment attempt. A failed attempt leaves the order retryable (N4)."""
+
+    __tablename__ = "payments"
+    __table_args__ = (
+        UniqueConstraint("order_id", "attempt"),
+        CheckConstraint("amount_paise > 0", name="ck_payment_amount"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(HASH_LEN), unique=True)
+    attempt: Mapped[int] = mapped_column(Integer)
+    method: Mapped[str] = mapped_column(String(16))
+    amount_paise: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[PaymentStatus] = mapped_column(_enum(PaymentStatus))
+    reference: Mapped[str] = mapped_column(String(40))
+    failure_code: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+
+    order: Mapped[Order] = relationship(back_populates="payments")
+
+
+# ------------------------------------------------------------------ identity (mock OTP)
+
+
+class PrincipalIdentity(Base):
+    """Phone → principal, keyed by a keyed HMAC of the number. No plaintext phone here."""
+
+    __tablename__ = "principal_identities"
+
+    phone_hmac: Mapped[str] = mapped_column(String(HASH_LEN), primary_key=True)
+    principal_token: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+
+
+class OtpChallenge(Base):
+    """One OTP sent. Only an HMAC of the code is stored; attempts are capped (lockout)."""
+
+    __tablename__ = "otp_challenges"
+    __table_args__ = (CheckConstraint("attempts >= 0", name="ck_otp_attempts"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    phone_hmac: Mapped[str] = mapped_column(String(HASH_LEN), index=True)
+    code_hmac: Mapped[str] = mapped_column(String(HASH_LEN))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    expires_at: Mapped[datetime]
+    consumed_at: Mapped[datetime | None]
 
 
 # ------------------------------------------------------------------ Smart KYC

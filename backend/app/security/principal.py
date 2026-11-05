@@ -32,9 +32,13 @@ def new_principal_id() -> str:
     return "p_" + secrets.token_urlsafe(18)
 
 
-def derive_key(master_key: bytes) -> bytes:
+def derive_subkey(master_key: bytes, label: bytes) -> bytes:
     """Domain-separated sub-key so the master key is never used directly."""
-    return hmac.new(master_key, _DERIVATION_LABEL, hashlib.sha256).digest()
+    return hmac.new(master_key, label, hashlib.sha256).digest()
+
+
+def derive_key(master_key: bytes) -> bytes:
+    return derive_subkey(master_key, _DERIVATION_LABEL)
 
 
 class PrincipalTokens:

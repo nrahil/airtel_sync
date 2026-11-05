@@ -30,3 +30,10 @@ export function messagesFor(locale: Locale): Messages {
 export function bcp47(locale: Locale): string {
   return `${locale}-IN`;
 }
+
+/** Fill `{name}` placeholders. Values are plain text; React escapes them on render. */
+export function fill(template: string, values: Record<string, string | number>): string {
+  return template.replace(/\{(\w+)\}/g, (match, key: string) =>
+    key in values ? String(values[key]) : match,
+  );
+}
