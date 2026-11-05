@@ -31,7 +31,7 @@ dev = [
     "hypothesis>=6.100,<7",      # property tests (pricing)
     "types-pyyaml>=6.0.12,<7",
     "ruff>=0.6,<1",
-    "mypy>=1.11,<2",
+    "mypy>=1.11,<3",
     "pip-audit>=2.7,<3",
     "pre-commit>=3.8,<5",
 ]
