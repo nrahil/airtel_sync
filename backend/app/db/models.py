@@ -181,6 +181,20 @@ class NotificationStatus(StrEnum):
     NO_CONTACT = "NO_CONTACT"  # no sealed contact on file (or it was erased)
 
 
+class StaffRole(StrEnum):
+    """Back-office roles (ARCHITECTURE §10.1). Permissions live in ``app.backoffice.rbac``."""
+
+    SALES = "sales"
+    PARTNER = "partner"
+    KYC_REVIEWER = "kyc_reviewer"
+    ADMIN = "admin"
+
+
+class LeadKind(StrEnum):
+    LEAD = "LEAD"  # historic lead from smb_leads.csv (by lead_id)
+    SESSION = "SESSION"  # advisor session (by UUID)
+
+
 class VaultField(StrEnum):
     NAME = "NAME"
     PHONE = "PHONE"
@@ -418,6 +432,49 @@ class KycReviewItem(Base):
     note: Mapped[str | None] = mapped_column(String(500))
 
     application: Mapped[KycApplication] = relationship(back_populates="review_items")
+
+
+# ------------------------------------------------------------------ back office
+
+
+class StaffUser(Base):
+    """A back-office user. Only a slow, salted password hash is stored (scrypt).
+
+    ``partner_id`` scopes a channel partner to the leads assigned to their firm; it is
+    set if and only if the role is ``partner``.
+    """
+
+    __tablename__ = "staff_users"
+    __table_args__ = (
+        CheckConstraint("failed_logins >= 0", name="ck_staff_failed_logins"),
+        CheckConstraint(
+            "(role = 'partner') = (partner_id IS NOT NULL)", name="ck_staff_partner_scope"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    username: Mapped[str] = mapped_column(String(40), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(200))
+    role: Mapped[StaffRole] = mapped_column(_enum(StaffRole))
+    partner_id: Mapped[str | None] = mapped_column(String(40), index=True)
+    active: Mapped[bool] = mapped_column(default=True)
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None]
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+
+
+class LeadAssignment(Base):
+    """Which partner firm owns a lead (historic lead or advisor session). One owner each."""
+
+    __tablename__ = "lead_assignments"
+    __table_args__ = (UniqueConstraint("lead_kind", "lead_ref"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    lead_kind: Mapped[LeadKind] = mapped_column(_enum(LeadKind))
+    lead_ref: Mapped[str] = mapped_column(String(36))
+    partner_id: Mapped[str] = mapped_column(String(40), index=True)
+    assigned_by: Mapped[str] = mapped_column(String(64))
+    assigned_at: Mapped[datetime] = mapped_column(default=_now)
 
 
 # ------------------------------------------------------------------ append-only logs

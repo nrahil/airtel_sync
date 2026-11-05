@@ -105,6 +105,17 @@ class Settings(BaseSettings):
     # Order tracker: links in proactive WhatsApp/SMS updates point at the PWA.
     public_app_url: str = "http://localhost:3000"
 
+    # Back office (Phase 8): staff sign-in, lockout, limits, "unclosed session" idle time.
+    staff_token_ttl_minutes: Annotated[int, Field(ge=5, le=12 * 60)] = 8 * 60
+    staff_login_max_failures: Annotated[int, Field(ge=1, le=20)] = 5
+    staff_lockout_minutes: Annotated[int, Field(ge=1, le=24 * 60)] = 15
+    staff_login_ip_rate_per_minute: Annotated[int, Field(ge=1)] = 10
+    backoffice_rate_per_minute: Annotated[int, Field(ge=1)] = 120  # per staff user
+    backoffice_reveal_rate_per_hour: Annotated[int, Field(ge=1)] = 60  # per staff user
+    backoffice_idle_minutes: Annotated[int, Field(ge=1)] = 30
+    # Propensity model (JSON, no pickle). Trained on first use if missing or stale.
+    propensity_model_path: Path = Path("data/propensity_model.json")
+
     @model_validator(mode="after")
     def _production_guards(self) -> Self:
         if self.environment != "production":

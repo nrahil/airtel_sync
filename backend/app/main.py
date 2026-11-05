@@ -25,7 +25,7 @@ from app.lookups.registry import FaultInjector, RegistryProvider
 from app.lookups.service import LookupService
 from app.orders.notifications import CONTACT_LABEL, MockTransport, OrderNotifier
 from app.security.pii_mask import install_pii_log_masking
-from app.security.principal import principal_tokens_from
+from app.security.principal import principal_tokens_from, staff_tokens_from
 from app.security.rate_limit import SlidingWindowLimiter
 from app.startup_checks import TesseractProbe, default_probe, ensure_tesseract
 
@@ -139,6 +139,20 @@ def create_app(
     )
     app.state.checkout_principal_limiter = SlidingWindowLimiter(
         limit=cfg.checkout_rate_per_minute, window_seconds=60
+    )
+
+    # Back office (Phase 8): staff tokens, login / per-staff / reveal limits.
+    app.state.staff_tokens = staff_tokens_from(
+        master, ttl=timedelta(minutes=cfg.staff_token_ttl_minutes), production=is_prod
+    )
+    app.state.staff_login_limiter = SlidingWindowLimiter(
+        limit=cfg.staff_login_ip_rate_per_minute, window_seconds=60
+    )
+    app.state.backoffice_limiter = SlidingWindowLimiter(
+        limit=cfg.backoffice_rate_per_minute, window_seconds=60
+    )
+    app.state.reveal_limiter = SlidingWindowLimiter(
+        limit=cfg.backoffice_reveal_rate_per_hour, window_seconds=3600
     )
 
     app.add_middleware(

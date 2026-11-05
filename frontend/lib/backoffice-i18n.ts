@@ -1,0 +1,168 @@
+/**
+ * Back-office strings. A staff tool, so English and Hindi only; every other locale
+ * falls back to English. `satisfies` keeps the Hindi catalogue complete.
+ */
+
+import type { Locale } from "@/lib/i18n";
+
+const en = {
+  title: "Back office",
+  signIn: "Staff sign-in",
+  username: "Username",
+  password: "Password",
+  signInButton: "Sign in",
+  signOut: "Sign out",
+  badLogin: "Wrong username or password, or the account is locked for a while.",
+  signedInAs: "{user} · {role}",
+  error: "Something went wrong. Please try again.",
+  loading: "Loading…",
+  empty: "Nothing here right now.",
+  tabs: { leads: "Call next", sessions: "Unclosed sessions", review: "KYC queue", sla: "SLA breaches", model: "Model" },
+  roles: { sales: "Sales", partner: "Partner", kyc_reviewer: "KYC reviewer", admin: "Admin" },
+  leads: {
+    total: "{n} leads to call, best first",
+    score: "Likelihood",
+    why: "Why",
+    stage: "Stopped at: {stage}",
+    assigned: "Partner: {partner}",
+    unassignedOnly: "Unassigned only",
+    noModel: "No model yet — sorted by lead id.",
+    more: "Show more",
+  },
+  sessions: {
+    idle: "Idle {n} min",
+    contactable: "Can be called",
+    anonymous: "Anonymous (no contact)",
+    order: "Order: {state}",
+    atQuestion: "Stopped at question: {slot}",
+    reasons: {
+      ABANDONED_MIDWAY: "Left mid-conversation",
+      TURN_LIMIT: "Hit the turn limit",
+      LLM_UNAVAILABLE: "Assistant was unavailable",
+      QUOTE_NOT_OPENED: "Saw a recommendation, never opened the quote",
+      QUOTE_NOT_ACCEPTED: "Opened the quote, didn't accept",
+      QUOTE_EXPIRED: "Quote expired",
+      KYC_NOT_STARTED: "Ordered, KYC not started",
+      KYC_ACTION_NEEDED: "KYC needs a fix",
+      PAYMENT_PENDING: "KYC done, not paid",
+      PAYMENT_FAILED: "Payment failed",
+      CANCELLED: "Cancelled",
+      NOT_FEASIBLE: "Site not feasible",
+    } as Record<string, string>,
+  },
+  review: {
+    kinds: { REVIEW: "Needs a decision", HANDOFF: "Hand-off after 3 failed tries" },
+    attempts: "Failed attempts: {n}",
+    note: "Note (required)",
+    approve: "Approve",
+    reject: "Reject",
+    handled: "Mark handled",
+    done: "Saved: {status}",
+  },
+  sla: { age: "Day {n}", due: "Due {date}", advance: "Move to {state}" },
+  model: {
+    auc: "Holdout AUC (June)",
+    baselines: "Baselines: random {random} · GSTIN only {gstin}",
+    lift: "Top-decile lift",
+    rows: "Trained on {train} Apr–May leads, tested on {test} June leads",
+    coefficients: "Strongest factors",
+  },
+  reveal: {
+    button: "Show details",
+    reason: "Reason",
+    reasons: {
+      CALL_BACK: "Calling back",
+      KYC_REVIEW: "KYC review",
+      CUSTOMER_REQUEST: "Customer asked",
+      FULFILMENT: "Installation",
+    },
+    confirm: "Reveal (logged)",
+    logged: "This view was logged.",
+    nothing: "No contact details on file.",
+  },
+  assign: { label: "Partner id", button: "Assign", clear: "Unassign", saved: "Assigned to {partner}", cleared: "Unassigned" },
+};
+
+export type BackofficeMessages = typeof en;
+
+const hi = {
+  title: "बैक ऑफ़िस",
+  signIn: "स्टाफ़ साइन-इन",
+  username: "यूज़रनेम",
+  password: "पासवर्ड",
+  signInButton: "साइन इन करें",
+  signOut: "साइन आउट",
+  badLogin: "यूज़रनेम या पासवर्ड गलत है, या खाता कुछ देर के लिए लॉक है।",
+  signedInAs: "{user} · {role}",
+  error: "कुछ गड़बड़ हुई। फिर से कोशिश करें।",
+  loading: "लोड हो रहा है…",
+  empty: "अभी यहाँ कुछ नहीं है।",
+  tabs: { leads: "अगला कॉल", sessions: "अधूरे सेशन", review: "KYC कतार", sla: "SLA उल्लंघन", model: "मॉडल" },
+  roles: { sales: "सेल्स", partner: "पार्टनर", kyc_reviewer: "KYC समीक्षक", admin: "एडमिन" },
+  leads: {
+    total: "कॉल करने के लिए {n} लीड, सबसे अच्छी पहले",
+    score: "संभावना",
+    why: "क्यों",
+    stage: "यहाँ रुके: {stage}",
+    assigned: "पार्टनर: {partner}",
+    unassignedOnly: "सिर्फ़ बिना असाइन वाले",
+    noModel: "अभी मॉडल नहीं है — लीड आईडी से क्रम।",
+    more: "और दिखाएँ",
+  },
+  sessions: {
+    idle: "{n} मिनट से निष्क्रिय",
+    contactable: "कॉल किया जा सकता है",
+    anonymous: "अनाम (संपर्क नहीं)",
+    order: "ऑर्डर: {state}",
+    atQuestion: "इस सवाल पर रुके: {slot}",
+    reasons: {
+      ABANDONED_MIDWAY: "बातचीत बीच में छोड़ी",
+      TURN_LIMIT: "सवालों की सीमा पूरी",
+      LLM_UNAVAILABLE: "सहायक उपलब्ध नहीं था",
+      QUOTE_NOT_OPENED: "सुझाव देखा, कोटेशन नहीं खोला",
+      QUOTE_NOT_ACCEPTED: "कोटेशन खोला, स्वीकार नहीं किया",
+      QUOTE_EXPIRED: "कोटेशन की समय-सीमा खत्म",
+      KYC_NOT_STARTED: "ऑर्डर हुआ, KYC शुरू नहीं",
+      KYC_ACTION_NEEDED: "KYC में सुधार चाहिए",
+      PAYMENT_PENDING: "KYC पूरा, भुगतान नहीं",
+      PAYMENT_FAILED: "भुगतान विफल",
+      CANCELLED: "रद्द",
+      NOT_FEASIBLE: "साइट पर संभव नहीं",
+    } as Record<string, string>,
+  },
+  review: {
+    kinds: { REVIEW: "फ़ैसला चाहिए", HANDOFF: "3 बार विफल — हैंड-ऑफ़" },
+    attempts: "विफल प्रयास: {n}",
+    note: "नोट (ज़रूरी)",
+    approve: "मंज़ूर",
+    reject: "अस्वीकार",
+    handled: "निपटाया गया",
+    done: "सहेजा गया: {status}",
+  },
+  sla: { age: "दिन {n}", due: "नियत {date}", advance: "{state} पर ले जाएँ" },
+  model: {
+    auc: "होल्डआउट AUC (जून)",
+    baselines: "आधार: रैंडम {random} · सिर्फ़ GSTIN {gstin}",
+    lift: "टॉप-10% लिफ़्ट",
+    rows: "अप्रैल–मई की {train} लीड पर ट्रेन, जून की {test} लीड पर टेस्ट",
+    coefficients: "सबसे मज़बूत कारक",
+  },
+  reveal: {
+    button: "विवरण दिखाएँ",
+    reason: "कारण",
+    reasons: {
+      CALL_BACK: "वापस कॉल",
+      KYC_REVIEW: "KYC समीक्षा",
+      CUSTOMER_REQUEST: "ग्राहक ने कहा",
+      FULFILMENT: "इंस्टॉलेशन",
+    },
+    confirm: "दिखाएँ (लॉग होगा)",
+    logged: "यह देखना लॉग किया गया।",
+    nothing: "कोई संपर्क विवरण नहीं है।",
+  },
+  assign: { label: "पार्टनर आईडी", button: "असाइन करें", clear: "असाइन हटाएँ", saved: "{partner} को असाइन", cleared: "असाइन हटाया" },
+} satisfies BackofficeMessages;
+
+export function backofficeMessages(locale: Locale): BackofficeMessages {
+  return locale === "hi" ? hi : en;
+}

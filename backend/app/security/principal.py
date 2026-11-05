@@ -14,7 +14,7 @@ import logging
 import re
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Final
+from typing import ClassVar, Final
 
 log = logging.getLogger("udyam.security")
 
@@ -44,6 +44,9 @@ def derive_key(master_key: bytes) -> bytes:
 class PrincipalTokens:
     __slots__ = ("_key", "ttl")
 
+    VERSION: ClassVar[str] = _VERSION
+    ID_RE: ClassVar[re.Pattern[str]] = _PRINCIPAL_RE
+
     def __init__(self, key: bytes, *, ttl: timedelta) -> None:
         if len(key) < MIN_KEY_BYTES:
             raise ValueError(f"token key must be at least {MIN_KEY_BYTES} bytes")
@@ -54,27 +57,55 @@ class PrincipalTokens:
         return hmac.new(self._key, payload.encode("ascii"), hashlib.sha256).hexdigest()
 
     def issue(self, principal_id: str, *, now: datetime) -> str:
-        if not _PRINCIPAL_RE.fullmatch(principal_id):
+        if not self.ID_RE.fullmatch(principal_id):
             raise ValueError("malformed principal id")
         expiry = int((now + self.ttl).timestamp())
-        payload = f"{_VERSION}.{principal_id}.{expiry}"
+        payload = f"{self.VERSION}.{principal_id}.{expiry}"
         return f"{payload}.{self._sig(payload)}"
 
     def verify(self, token: str, *, now: datetime) -> str:
         parts = token.split(".")
-        if len(parts) != 4 or parts[0] != _VERSION:
+        if len(parts) != 4 or parts[0] != self.VERSION:
             raise InvalidPrincipalTokenError("malformed token")
         _, principal_id, expiry, signature = parts
         if not hmac.compare_digest(self._sig(".".join(parts[:3])), signature):
             raise InvalidPrincipalTokenError("bad signature")
-        if not _PRINCIPAL_RE.fullmatch(principal_id) or not expiry.isdigit():
+        if not self.ID_RE.fullmatch(principal_id) or not expiry.isdigit():
             raise InvalidPrincipalTokenError("malformed token")
         if now >= datetime.fromtimestamp(int(expiry), tz=UTC):
             raise InvalidPrincipalTokenError("token expired")
         return principal_id
 
     def __repr__(self) -> str:
-        return "PrincipalTokens(<redacted>)"
+        return f"{type(self).__name__}(<redacted>)"
+
+
+_STAFF_RE: Final = re.compile(r"^s_[A-Za-z0-9_-]{16,64}$")
+STAFF_LABEL: Final = b"udyam/staff-token/v1"
+
+
+def new_staff_id() -> str:
+    return "s_" + secrets.token_urlsafe(18)
+
+
+class StaffTokens(PrincipalTokens):
+    """Back-office tokens: own prefix, id format and derived key — never interchangeable
+    with a customer's principal token. They carry the staff id only; role and partner
+    scope are re-read from the database on every request, so changes apply at once."""
+
+    __slots__ = ()
+
+    VERSION = "s1"
+    ID_RE = _STAFF_RE
+
+
+def staff_tokens_from(master_key: bytes | None, *, ttl: timedelta, production: bool) -> StaffTokens:
+    if master_key is not None:
+        return StaffTokens(derive_subkey(master_key, STAFF_LABEL), ttl=ttl)
+    if production:
+        raise RuntimeError("MASTER_KEY is required in production")
+    log.warning("MASTER_KEY not set; staff tokens use an ephemeral key")
+    return StaffTokens(secrets.token_bytes(MIN_KEY_BYTES), ttl=ttl)
 
 
 def principal_tokens_from(

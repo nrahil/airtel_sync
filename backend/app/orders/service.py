@@ -3,9 +3,9 @@
 All state changes go through :class:`OrderStateMachine`, whose transition hook keeps
 the stored ETA current and sends the owner a proactive update.
 
-Fulfilment (feasibility → install → activation) is run by operations. Until the back
-office lands (Phase 8) it is driven by :meth:`TrackerService.fulfil`, exposed only
-outside production for the demo; the guards are the same either way.
+Fulfilment (feasibility → install → activation) is run by operations through
+:meth:`TrackerService.fulfil` — from the back office (``admin``), or outside
+production from the owner's demo endpoint. The guards are the same either way.
 """
 
 from __future__ import annotations
@@ -165,19 +165,21 @@ class TrackerService:
         self._refund_if_paid(audit, order, actor)
         db.commit()
 
-    def fulfil(self, db: Session, clock: Clock, order: Order, target: OrderState) -> None:
-        """Operations moves the install forward (mock until the back office exists)."""
+    def fulfil(
+        self, db: Session, clock: Clock, order: Order, target: OrderState, *, actor: str = OPS
+    ) -> None:
+        """Operations moves the install forward (back office, or the demo endpoint)."""
         if target not in FULFILMENT_TARGETS:
             raise TrackerError(422, "NOT_A_FULFILMENT_STEP", state=target.value)
         audit = AuditLog(db, clock)
         try:
-            self.machine(db, clock, audit).transition(order, target, actor=OPS)
+            self.machine(db, clock, audit).transition(order, target, actor=actor)
         except IllegalTransitionError as exc:
             raise TrackerError(
                 409, "ILLEGAL_TRANSITION", state=exc.current.value, target=exc.target.value
             ) from None
         if target is S.NOT_FEASIBLE:
-            self._refund_if_paid(audit, order, OPS)
+            self._refund_if_paid(audit, order, actor)
         db.commit()
 
     @staticmethod

@@ -85,13 +85,14 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 @pytest.fixture
-def make_settings() -> Callable[..., Settings]:
+def make_settings(tmp_path: Path) -> Callable[..., Settings]:
     def _make(**overrides: Any) -> Settings:
         base: dict[str, Any] = {
             "environment": "test",
             "today_override": DATASET_TODAY,
             "database_url": "sqlite://",  # in-memory: tests never touch backend/data/
             "data_dir": FIXTURE_DATA_DIR,
+            "propensity_model_path": tmp_path / "propensity_model.json",
         }
         base.update(overrides)
         return Settings(_env_file=None, **base)
