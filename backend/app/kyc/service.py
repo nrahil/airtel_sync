@@ -3,7 +3,11 @@
 The pure pipeline (:mod:`extract`, :mod:`crosscheck`, :mod:`verdict`) knows nothing
 about the database; this module wires it to storage:
 
-* uploads are sanitised, stored encrypted, OCR'd once, and the extraction is sealed;
+* uploads are sanitised, stored encrypted, OCR'd once, and the extraction is sealed —
+  all under the applicant's own data key (:mod:`app.security.vault`), so erasure
+  crypto-shreds them;
+* raw images get no deadline at upload: :mod:`app.privacy.retention` sets one from
+  activation / drop / withdrawal;
 * ``submit`` evaluates every slot against the registries (an outage → PENDING),
   stores a masked verdict, queues review items and counts failed attempts;
 * after ``kyc_handoff_after_failures`` FAIL/ACTION_NEEDED submissions the case is
@@ -16,10 +20,9 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any, Final
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.config import Clock
 from app.db.models import KycApplication, KycDocument, KycStatus, ReviewKind
@@ -48,6 +51,7 @@ from app.lookups.registry import (
     RegistryProvider,
     RegistryUnavailableError,
 )
+from app.security.vault import Vault
 
 log = logging.getLogger("udyam.kyc")
 
@@ -76,42 +80,58 @@ class KycService:
         self,
         *,
         blobs: BlobStore,
-        sealer: Sealer,
+        vault: Vault,
         engine: OcrEngine,
         registries: RegistryProvider,
         faults: FaultInjector,
         clock: Clock,
-        retention_days: int,
         handoff_after: int,
     ) -> None:
         self.blobs = blobs
-        self.sealer = sealer
+        self.vault = vault
         self.engine = engine
         self.registries = registries
         self.faults = faults
         self.clock = clock
-        self.retention = timedelta(days=retention_days)
         self.handoff_after = handoff_after
 
     # -------------------------------------------------------------- sealing
 
-    def _seal(self, value: Any, aad: str) -> bytes:
-        return self.sealer.seal(json.dumps(value, separators=(",", ":")).encode(), aad.encode())
+    def sealer(self, app: KycApplication, *, create: bool = False) -> Sealer:
+        """The applicant's own sealer (raises ``ErasedError`` once crypto-shredded)."""
+        db = object_session(app)
+        if db is None:
+            raise RuntimeError("KYC application is detached from its session")
+        return self.vault.sealer(db, app.principal_token, create=create)
 
-    def _unseal(self, blob: bytes, aad: str) -> Any:
-        return json.loads(self.sealer.open(blob, aad.encode()))
+    def _seal(self, app: KycApplication, value: Any, aad: str, *, create: bool = False) -> bytes:
+        plain = json.dumps(value, separators=(",", ":")).encode()
+        return self.sealer(app, create=create).seal(plain, aad.encode())
+
+    def _unseal(self, app: KycApplication, blob: bytes, aad: str) -> Any:
+        return json.loads(self.sealer(app).open(blob, aad.encode()))
 
     def context(self, app: KycApplication) -> ApplicationContext:
         return ApplicationContext.model_validate(
-            self._unseal(app.context_sealed, f"kyc-context:{app.id}")
+            self._unseal(app, app.context_sealed, f"kyc-context:{app.id}")
+        )
+
+    def set_context(self, app: KycApplication, ctx: ApplicationContext) -> None:
+        app.context_sealed = self._seal(
+            app, ctx.model_dump(mode="json"), f"kyc-context:{app.id}", create=True
         )
 
     def _seal_extraction(self, app: KycApplication, slot: DocSlot, extraction: Extraction) -> bytes:
-        return self._seal(extraction.model_dump(mode="json"), f"kyc-extraction:{app.id}:{slot}")
+        aad = f"kyc-extraction:{app.id}:{slot}"
+        return self._seal(app, extraction.model_dump(mode="json"), aad)
 
     def extraction(self, app: KycApplication, doc: KycDocument) -> Extraction:
-        data = self._unseal(doc.extraction_sealed, f"kyc-extraction:{app.id}:{doc.slot}")
+        data = self._unseal(app, doc.extraction_sealed, f"kyc-extraction:{app.id}:{doc.slot}")
         return Extraction.model_validate(data)
+
+    def image(self, app: KycApplication, doc: KycDocument) -> bytes | None:
+        """The sanitised raw image, while it is still retained."""
+        return self.blobs.get(doc.blob_key, self.sealer(app)) if doc.blob_key else None
 
     # -------------------------------------------------------------- applications
 
@@ -119,7 +139,7 @@ class KycService:
         app = KycApplication(principal_token=principal, context_sealed=b"")
         db.add(app)
         db.flush()  # assigns the id used as associated data
-        app.context_sealed = self._seal(ctx.model_dump(mode="json"), f"kyc-context:{app.id}")
+        self.set_context(app, ctx)
         db.commit()
         return app
 
@@ -151,7 +171,7 @@ class KycService:
             blob_key=blob_key,
             image_sha256=sha256,
             extraction_sealed=self._seal_extraction(app, slot, extraction),
-            expires_at=self.clock.now() + self.retention if blob_key else None,
+            expires_at=None,  # set by the retention job / consent withdrawal
         )
         app.documents.append(doc)
         app.status = KycStatus.DRAFT
@@ -163,7 +183,7 @@ class KycService:
     ) -> UploadResult:
         """Raises :class:`~app.kyc.upload_guard.UploadRejectedError` for hostile/bad files."""
         clean = await asyncio.to_thread(sanitise, data)
-        blob_key = await asyncio.to_thread(self.blobs.put, clean.png)
+        blob_key = await asyncio.to_thread(self.blobs.put, clean.png, self.sealer(app))
         try:
             extraction = await asyncio.to_thread(extract_document, clean.open(), slot, self.engine)
         except OcrUnavailableError as exc:

@@ -72,9 +72,20 @@ jobs:
           path: frontend/playwright-report
           retention-days: 7
 
+  secrets:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # scan every commit, not just the tip
+      - name: gitleaks (full history, default rules + .gitleaks.toml)
+        run: >-
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1
+          git /repo --config /repo/.gitleaks.toml --redact --no-banner --exit-code 1
+
   docker:
     runs-on: ubuntu-24.04
-    needs: [backend, frontend]
+    needs: [backend, frontend, secrets]
     steps:
       - uses: actions/checkout@v4
       - name: Build and smoke-test the stack

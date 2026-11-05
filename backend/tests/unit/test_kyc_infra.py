@@ -18,10 +18,10 @@ KEY = b"k" * 32
 
 
 def test_blob_round_trip_and_random_keys(tmp_path: Path) -> None:
-    store = BlobStore(tmp_path, Sealer(KEY))
-    a, b = store.put(b"same bytes"), store.put(b"same bytes")
+    store, sealer = BlobStore(tmp_path), Sealer(KEY)
+    a, b = store.put(b"same bytes", sealer), store.put(b"same bytes", sealer)
     assert a != b
-    assert store.get(a) == b"same bytes"
+    assert store.get(a, sealer) == b"same bytes"
     raw_a = next(tmp_path.rglob(f"{a}.bin")).read_bytes()
     raw_b = next(tmp_path.rglob(f"{b}.bin")).read_bytes()
     assert raw_a != raw_b  # fresh nonce per object
@@ -32,31 +32,31 @@ def test_blob_round_trip_and_random_keys(tmp_path: Path) -> None:
 
 
 def test_tampered_or_moved_ciphertext_fails(tmp_path: Path) -> None:
-    store = BlobStore(tmp_path, Sealer(KEY))
-    a, b = store.put(b"alpha"), store.put(b"beta")
+    store, sealer = BlobStore(tmp_path), Sealer(KEY)
+    a, b = store.put(b"alpha", sealer), store.put(b"beta", sealer)
     path_a, path_b = next(tmp_path.rglob(f"{a}.bin")), next(tmp_path.rglob(f"{b}.bin"))
     path_b.write_bytes(path_a.read_bytes())  # ciphertext copied to another key
     with pytest.raises(BlobIntegrityError):
-        store.get(b)
+        store.get(b, sealer)
     data = bytearray(path_a.read_bytes())
     data[-1] ^= 1
     path_a.write_bytes(bytes(data))
     with pytest.raises(BlobIntegrityError):
-        store.get(a)
+        store.get(a, sealer)
     with pytest.raises(BlobIntegrityError):
         Sealer(KEY).open(b"short", b"")
 
 
 def test_wrong_key_cannot_read(tmp_path: Path) -> None:
-    key = BlobStore(tmp_path, Sealer(KEY)).put(b"secret")
-    with pytest.raises(BlobIntegrityError):
-        BlobStore(tmp_path, Sealer(b"x" * 32)).get(key)
+    key = BlobStore(tmp_path).put(b"secret", Sealer(KEY))
+    with pytest.raises(BlobIntegrityError):  # another person's key
+        BlobStore(tmp_path).get(key, Sealer(b"x" * 32))
 
 
 @pytest.mark.parametrize("key", ["../../etc/passwd", "a" * 10, "a/b" * 20, ""])
 def test_malformed_blob_keys_rejected(tmp_path: Path, key: str) -> None:
     with pytest.raises(ValueError, match="malformed"):
-        BlobStore(tmp_path, Sealer(KEY)).get(key)
+        BlobStore(tmp_path).get(key, Sealer(KEY))
 
 
 def test_sealer_keys() -> None:

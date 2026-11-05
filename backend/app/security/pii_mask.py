@@ -108,4 +108,5 @@ def install_pii_log_masking() -> None:
         return record
 
     factory._pii_masking = True  # type: ignore[attr-defined]
+    factory._request_id = getattr(previous, "_request_id", False)  # type: ignore[attr-defined]
     logging.setLogRecordFactory(factory)

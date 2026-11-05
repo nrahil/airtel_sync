@@ -154,16 +154,24 @@ class TrackerService:
             db.commit()
         return moved
 
-    def cancel(self, db: Session, clock: Clock, order: Order, actor: str) -> None:
+    def cancel(
+        self,
+        db: Session,
+        clock: Clock,
+        order: Order,
+        actor: str,
+        *,
+        reason: str = "OWNER_REQUEST",
+        commit: bool = True,
+    ) -> None:
         if order.state not in OWNER_CANCELLABLE:
             raise TrackerError(409, "ORDER_NOT_CANCELLABLE", state=order.state.value)
-        order.cancel_reason = "OWNER_REQUEST"
+        order.cancel_reason = reason
         audit = AuditLog(db, clock)
-        self.machine(db, clock, audit).transition(
-            order, S.CANCELLED, actor=actor, reason="OWNER_REQUEST"
-        )
+        self.machine(db, clock, audit).transition(order, S.CANCELLED, actor=actor, reason=reason)
         self._refund_if_paid(audit, order, actor)
-        db.commit()
+        if commit:
+            db.commit()
 
     def fulfil(
         self, db: Session, clock: Clock, order: Order, target: OrderState, *, actor: str = OPS

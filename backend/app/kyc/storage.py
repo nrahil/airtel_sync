@@ -2,8 +2,10 @@
 
 * AES-256-GCM with a fresh 96-bit nonce per object; the object key is bound as
   associated data, so a ciphertext copied to another key fails to decrypt.
-* The data key is derived from ``MASTER_KEY`` with a domain label — never the master
-  key itself. (Per-person keys + crypto-shredding arrive with the vault in Phase 9.)
+* Each object is sealed with its owner's own data key (:mod:`app.security.vault`),
+  passed in per call, so crypto-shredding a person makes their images unreadable.
+  :func:`sealer_from` derives purpose keys from ``MASTER_KEY`` under a domain label —
+  never the master key itself.
 * Object keys are random URL-safe tokens; uploaded filenames are never used (UP-06).
 * Files live outside any web root and are never served directly.
 """
@@ -71,26 +73,25 @@ def sealer_from(master_key: bytes | None, *, production: bool, label: bytes = _L
 
 
 class BlobStore:
-    def __init__(self, root: Path, sealer: Sealer) -> None:
+    def __init__(self, root: Path) -> None:
         self._root = root
-        self._sealer = sealer
 
     def _path(self, key: str) -> Path:
         if not _KEY_RE.fullmatch(key):
             raise ValueError("malformed blob key")
         return self._root / key[:2] / f"{key}.bin"
 
-    def put(self, data: bytes) -> str:
+    def put(self, data: bytes, sealer: Sealer) -> str:
         key = secrets.token_urlsafe(32)
         path = self._path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
-        tmp.write_bytes(self._sealer.seal(data, key.encode("ascii")))
+        tmp.write_bytes(sealer.seal(data, key.encode("ascii")))
         tmp.replace(path)
         return key
 
-    def get(self, key: str) -> bytes:
-        return self._sealer.open(self._path(key).read_bytes(), key.encode("ascii"))
+    def get(self, key: str, sealer: Sealer) -> bytes:
+        return sealer.open(self._path(key).read_bytes(), key.encode("ascii"))
 
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)

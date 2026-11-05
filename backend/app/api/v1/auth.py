@@ -3,7 +3,8 @@
 ``request`` sends a code (mock SMS) and returns a challenge id; outside production
 the code is echoed as ``dev_code`` so the demo needs no phone. ``verify`` exchanges
 challenge + code for a Bearer principal token. Limits: per IP on both routes, per
-phone on ``request``; a challenge locks after ``OTP_MAX_ATTEMPTS`` wrong codes.
+phone on ``request``; a challenge locks after ``OTP_MAX_ATTEMPTS`` wrong codes and
+the phone after ``OTP_PHONE_MAX_FAILURES`` across challenges (429 ``OTP_LOCKED``).
 """
 
 from __future__ import annotations
@@ -44,6 +45,11 @@ def _ip_limited(request: Request) -> None:
 IpLimited = Annotated[None, Depends(_ip_limited)]
 
 
+def _locked(exc: OtpLockedError) -> HTTPException:
+    headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+    return HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, {"code": "OTP_LOCKED"}, headers)
+
+
 def _service(request: Request) -> OtpService:
     service: OtpService = request.app.state.otp_service
     return service
@@ -61,7 +67,10 @@ def request_otp(
             status.HTTP_422_UNPROCESSABLE_CONTENT, {"code": "INVALID_PHONE"}
         ) from None
     _enforce(request.app.state.otp_phone_limiter, f"phone:{phone_key}", "otp-phone")
-    issued = service.request(db, clock, body.phone)
+    try:
+        issued = service.request(db, clock, body.phone)
+    except OtpLockedError as exc:
+        raise _locked(exc) from None
     out: dict[str, Any] = {
         "challenge_id": issued.challenge_id,
         "expires_in_seconds": issued.expires_in_seconds,
@@ -78,8 +87,8 @@ def verify_otp(
 ) -> dict[str, Any]:
     try:
         principal = _service(request).verify(db, clock, body.challenge_id, body.code)
-    except OtpLockedError:
-        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, {"code": "OTP_LOCKED"}) from None
+    except OtpLockedError as exc:
+        raise _locked(exc) from None
     except OtpError as exc:
         detail: dict[str, Any] = {"code": exc.code}
         if exc.code == "OTP_INVALID":

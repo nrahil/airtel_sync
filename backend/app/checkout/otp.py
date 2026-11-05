@@ -10,7 +10,12 @@
   code is also returned to the client so the demo works without a phone.
 * So that order updates can reach the owner (Phase 7), the number is sealed with
   AES-GCM: bound to the challenge until it is verified, then re-sealed onto the
-  identity bound to the principal. Nothing readable is stored.
+  identity under the person's own data key (crypto-shredded on erasure). Nothing
+  readable is stored; the retention job clears what expired challenges still hold.
+* Brute force (AC-08): a challenge dies after ``max_attempts`` wrong codes, and the
+  *phone* is locked for ``lockout`` once ``phone_max_failures`` wrong codes pile up
+  across its challenges inside that window. New codes are refused, and so are
+  correct codes on challenges issued before the lock.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Final
 
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -31,6 +37,7 @@ from app.config import Clock
 from app.db.models import OtpChallenge, PrincipalIdentity
 from app.kyc.storage import BlobIntegrityError, Sealer
 from app.security.principal import MIN_KEY_BYTES, derive_subkey, new_principal_id
+from app.security.vault import ErasedError, Vault
 
 log = logging.getLogger("udyam.otp")
 
@@ -58,6 +65,10 @@ class OtpExpiredError(OtpError):
 
 class OtpLockedError(OtpError):
     code = "OTP_LOCKED"
+
+    def __init__(self, attempts_left: int = 0, retry_after: int | None = None) -> None:
+        super().__init__(attempts_left)
+        self.retry_after = retry_after
 
 
 def normalise_phone(raw: str) -> str:
@@ -134,21 +145,49 @@ class OtpService:
         *,
         ttl: timedelta,
         max_attempts: int,
+        phone_max_failures: int = 10,
+        lockout: timedelta = timedelta(hours=1),
         contact_sealer: Sealer | None = None,
+        vault: Vault | None = None,
     ) -> None:
+        if (contact_sealer is None) != (vault is None):
+            raise ValueError("contact_sealer and vault go together")
         self.keys = keys
         self.sender = sender
         self.ttl = ttl
         self.max_attempts = max_attempts
+        self.phone_max_failures = phone_max_failures
+        self.lockout = lockout
         self.contact_sealer = contact_sealer
+        self.vault = vault
 
     def phone_key(self, raw_phone: str) -> str:
         return self.keys.phone(normalise_phone(raw_phone))
 
+    def locked_for(self, db: Session, clock: Clock, phone_hmac: str) -> int | None:
+        """Seconds until this phone may try again, or ``None`` if it is not locked."""
+        since = clock.now() - self.lockout
+        recent = (OtpChallenge.phone_hmac == phone_hmac, OtpChallenge.created_at > since)
+        total = func.coalesce(func.sum(OtpChallenge.attempts), 0)
+        failures = db.scalar(select(total).where(*recent))
+        if int(failures or 0) < self.phone_max_failures:
+            return None
+        newest = db.scalar(
+            select(func.max(OtpChallenge.created_at)).where(*recent, OtpChallenge.attempts > 0)
+        )
+        if newest is None:
+            return None
+        return max(1, int((newest + self.lockout - clock.now()).total_seconds()))
+
     def request(self, db: Session, clock: Clock, raw_phone: str) -> Issued:
         phone = normalise_phone(raw_phone)
+        phone_hmac = self.keys.phone(phone)
+        retry = self.locked_for(db, clock, phone_hmac)
+        if retry is not None:
+            log.warning("OTP request refused: phone locked after repeated wrong codes")
+            raise OtpLockedError(retry_after=retry)
         challenge = OtpChallenge(
-            phone_hmac=self.keys.phone(phone),
+            phone_hmac=phone_hmac,
             code_hmac="",
             expires_at=clock.now() + self.ttl,
         )
@@ -173,6 +212,9 @@ class OtpService:
             raise OtpLockedError
         if clock.now() >= challenge.expires_at:
             raise OtpExpiredError
+        retry = self.locked_for(db, clock, challenge.phone_hmac)
+        if retry is not None:
+            raise OtpLockedError(retry_after=retry)
         candidate = code.strip()
         ok = (
             len(candidate) == CODE_DIGITS
@@ -186,6 +228,10 @@ class OtpService:
             log.info("OTP mismatch (attempts left %d)", left)
             if left <= 0:
                 raise OtpLockedError
+            retry = self.locked_for(db, clock, challenge.phone_hmac)
+            if retry is not None:
+                log.warning("phone locked after repeated wrong OTP codes")
+                raise OtpLockedError(retry_after=retry)
             raise OtpError(attempts_left=left)
         challenge.consumed_at = clock.now()
         principal = self._principal_for(db, challenge.phone_hmac)
@@ -196,7 +242,7 @@ class OtpService:
     def _keep_contact(self, db: Session, challenge: OtpChallenge, principal: str) -> None:
         """Move the sealed phone from the challenge to the identity (for order updates)."""
         sealed, challenge.contact_sealed = challenge.contact_sealed, None
-        if self.contact_sealer is None or not sealed:
+        if self.contact_sealer is None or self.vault is None or not sealed:
             return
         try:
             phone = self.contact_sealer.open(sealed, _challenge_aad(challenge.id))
@@ -204,8 +250,12 @@ class OtpService:
             log.warning("sealed OTP contact unreadable; order updates disabled for this sign-in")
             return
         identity = db.get(PrincipalIdentity, challenge.phone_hmac)
-        if identity is not None:
-            identity.contact_sealed = self.contact_sealer.seal(phone, contact_aad(principal))
+        if identity is None:
+            return
+        try:
+            identity.contact_sealed = self.vault.seal(db, principal, phone, contact_aad(principal))
+        except ErasedError:  # never resurrect a shredded key
+            identity.contact_sealed = None
 
     @staticmethod
     def _principal_for(db: Session, phone_hmac: str) -> str:

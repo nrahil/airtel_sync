@@ -1,0 +1,10 @@
+# Secrets scan (CI job `secrets`): gitleaks' default rules over the full git history.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Lockfile integrity hashes are not secrets"
+paths = [
+  '''frontend/package-lock\.json''',
+  '''backend/requirements(-dev)?\.lock''',
+]

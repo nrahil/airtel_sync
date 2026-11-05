@@ -16,6 +16,7 @@ from app.consent.ledger import ConsentLedger
 from app.db.models import ConsentPurpose
 from app.security.principal import InvalidPrincipalTokenError
 from app.security.rate_limit import SlidingWindowLimiter
+from app.security.vault import Vault
 
 security_log = logging.getLogger("udyam.security")
 
@@ -67,20 +68,29 @@ def authenticate(request: Request, authorization: str | None, clock: Clock) -> s
 
 
 def authenticated(*, ip_limiter: str, principal_limiter: str) -> Callable[..., str]:
-    """Dependency: IP limit → Bearer principal token → per-person limit. No consent check.
+    """Dependency: IP limit → Bearer principal token → not erased → per-person limit.
 
-    Limiters are looked up on ``app.state`` by attribute name so each app instance
-    (and each test) has its own counters.
+    No consent check. Limiters are looked up on ``app.state`` by attribute name so each
+    app instance (and each test) has its own counters. A token of someone whose data was
+    erased (key crypto-shredded) stops working at once, before it expires.
     """
 
     def dependency(
         request: Request,
+        db: Annotated[Session, Depends(get_db)],
         clock: Annotated[Clock, Depends(get_clock)],
         authorization: Annotated[str | None, Header()] = None,
     ) -> str:
         state = request.app.state
         _enforce(getattr(state, ip_limiter), f"ip:{client_ip(request)}", "ip")
         principal = authenticate(request, authorization, clock)
+        if Vault.is_erased(db, principal):
+            security_log.info("rejected token of an erased principal")
+            raise _error(
+                status.HTTP_401_UNAUTHORIZED,
+                {"code": "UNAUTHENTICATED"},
+                {"WWW-Authenticate": "Bearer"},
+            )
         _enforce(getattr(state, principal_limiter), f"p:{principal}", "principal")
         return principal
 
@@ -108,6 +118,11 @@ def guarded(
         return principal
 
     return dependency
+
+
+def api_ip_limit(request: Request) -> None:
+    """Backstop on every ``/api/v1`` route: one per-IP budget across the whole API."""
+    _enforce(request.app.state.api_ip_limiter, f"ip:{client_ip(request)}", "api")
 
 
 def require_idempotency_key(

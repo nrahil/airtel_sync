@@ -6,8 +6,9 @@ customer). SLA breaches raise a back-office alert on the ``OPS`` channel.
 
 Privacy:
 
-* The phone is never stored in clear. At OTP sign-in it is sealed (AES-GCM, bound to
-  the principal) on the identity row; it is opened only here, at send time.
+* The phone is never stored in clear. At OTP sign-in it is sealed (AES-GCM, under the
+  person's own data key, bound to the principal) on the identity row; it is opened
+  only here, at send time — and never again once the key is crypto-shredded.
 * ``order_notifications`` keeps the template, state, channel and outcome — never the
   destination or the text. Logs carry only the masked number.
 * With no sealed contact (or after erasure) the update is recorded as ``NO_CONTACT``;
@@ -41,11 +42,13 @@ from app.db.models import (
     OrderState,
     PrincipalIdentity,
 )
-from app.kyc.storage import BlobIntegrityError, Sealer
+from app.kyc.storage import BlobIntegrityError
+from app.security.vault import ErasedError, Vault, VaultKeyError
 
 log = logging.getLogger("udyam.notify")
 
-CONTACT_LABEL: Final = b"udyam/contact/v1"  # sealer key label, shared with OTP sign-in
+# Key label for the short-lived phone sealed on an OTP challenge (before a principal exists).
+CONTACT_LABEL: Final = b"udyam/contact/v1"
 _PLACEHOLDER: Final = re.compile(r"\{(\w+)\}")
 
 
@@ -147,15 +150,15 @@ class MockTransport:
 
 
 class OrderNotifier:
-    def __init__(self, sealer: Sealer, transport: Transport, *, app_url: str) -> None:
-        self.sealer = sealer
+    def __init__(self, vault: Vault, transport: Transport, *, app_url: str) -> None:
+        self.vault = vault
         self.transport = transport
         self.app_url = app_url.rstrip("/")
 
     # -------------------------------------------------------------- contact
 
-    def seal_contact(self, principal: str, phone: str) -> bytes:
-        return self.sealer.seal(phone.encode("ascii"), contact_aad(principal))
+    def seal_contact(self, db: Session, principal: str, phone: str) -> bytes:
+        return self.vault.seal(db, principal, phone.encode("ascii"), contact_aad(principal))
 
     def contact(self, db: Session, principal: str) -> str | None:
         sealed = db.scalar(
@@ -166,8 +169,10 @@ class OrderNotifier:
         if not sealed:
             return None
         try:
-            return self.sealer.open(sealed, contact_aad(principal)).decode("ascii")
-        except BlobIntegrityError:
+            return self.vault.open(db, principal, sealed, contact_aad(principal)).decode("ascii")
+        except ErasedError:
+            return None
+        except (BlobIntegrityError, VaultKeyError):
             log.warning("sealed contact unreadable (key rotated or tampered)")
             return None
 

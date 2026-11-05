@@ -2,10 +2,11 @@
 
 Design rules enforced here:
 
-* **No plaintext personal data outside the vault.** Operational tables reference
-  people by an opaque ``principal_token``; names, phones, GSTINs etc. live only in
-  ``vault_entries`` as AES-GCM ciphertext (encryption itself lands in Phase 9).
-  Crypto-shredding = deleting a principal's wrapped key.
+* **No plaintext personal data.** Operational tables reference people by an opaque
+  ``principal_token``; names, phones, GSTINs etc. are stored only as AES-256-GCM
+  ciphertext under that person's own data key (``principal_keys``, wrapped by a
+  MASTER_KEY-derived key; see ``app.security.vault``). Crypto-shredding = nulling the
+  wrapped key.
 * **Quotes are immutable** once written; only ``status`` may change (void/accept).
 * **Audit and consent logs are append-only** and hash-chained (``prev_hash``/``hash``).
 * Immutability is enforced twice: ORM flush guards (clear Python errors) and SQLite

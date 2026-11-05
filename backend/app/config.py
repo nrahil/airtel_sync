@@ -66,7 +66,10 @@ class Settings(BaseSettings):
     tesseract_required: bool = True
     tesseract_min_major: int = 5
 
+    # Strict CORS: exact origins only (no wildcard); https in production (loopback excepted).
     cors_origins: list[str] = ["http://localhost:3000"]
+    # Backstop limit on every /api/v1 route, per client IP, on top of the per-route limits.
+    api_ip_rate_per_minute: Annotated[int, Field(ge=1)] = 300
 
     # Signed principal tokens (issued after OTP in Phase 6).
     principal_token_ttl_minutes: Annotated[int, Field(ge=1, le=24 * 60)] = 60
@@ -94,6 +97,9 @@ class Settings(BaseSettings):
     otp_requests_per_window: Annotated[int, Field(ge=1)] = 3  # per phone
     otp_window_seconds: Annotated[int, Field(ge=60)] = 600
     otp_ip_rate_per_minute: Annotated[int, Field(ge=1)] = 10
+    # Phone-level lockout (AC-08): this many wrong codes across challenges → locked.
+    otp_phone_max_failures: Annotated[int, Field(ge=1, le=50)] = 10
+    otp_lockout_minutes: Annotated[int, Field(ge=1, le=24 * 60)] = 60
 
     # Quotes (anonymous, per IP) and checkout (consents, orders, payments).
     quote_rate_per_minute: Annotated[int, Field(ge=1)] = 60  # per client IP
@@ -115,6 +121,24 @@ class Settings(BaseSettings):
     backoffice_idle_minutes: Annotated[int, Field(ge=1)] = 30
     # Propensity model (JSON, no pickle). Trained on first use if missing or stale.
     propensity_model_path: Path = Path("data/propensity_model.json")
+
+    # Privacy rights (Phase 9): export / correction / erasure / withdrawal, per person.
+    privacy_rate_per_minute: Annotated[int, Field(ge=1)] = 10
+    # Retention: a KYC with no live order and no activity for this long counts as dropped;
+    # its raw images are then deleted ``kyc_raw_image_retention_days`` later.
+    kyc_abandoned_after_days: Annotated[int, Field(ge=1, le=365)] = 30
+
+    @model_validator(mode="after")
+    def _strict_cors(self) -> Self:
+        for origin in self.cors_origins:
+            if origin == "*" or "*" in origin:
+                raise ValueError("CORS_ORIGINS must list exact origins; wildcards are not allowed")
+            if not origin.startswith(("https://", "http://")) or origin.rstrip("/") != origin:
+                raise ValueError(f"CORS origin {origin!r} must be scheme://host[:port]")
+            loopback = origin.startswith(("http://localhost", "http://127.0.0.1"))
+            if self.environment == "production" and not (origin.startswith("https://") or loopback):
+                raise ValueError("CORS origins must use https in production (loopback excepted)")
+        return self
 
     @model_validator(mode="after")
     def _production_guards(self) -> Self:

@@ -24,9 +24,15 @@ from app.kyc.storage import BlobStore, sealer_from
 from app.lookups.registry import FaultInjector, RegistryProvider
 from app.lookups.service import LookupService
 from app.orders.notifications import CONTACT_LABEL, MockTransport, OrderNotifier
+from app.security.headers import (
+    RequestIdMiddleware,
+    SecurityHeadersMiddleware,
+    install_request_id_logging,
+)
 from app.security.pii_mask import install_pii_log_masking
 from app.security.principal import principal_tokens_from, staff_tokens_from
 from app.security.rate_limit import SlidingWindowLimiter
+from app.security.vault import vault_from
 from app.startup_checks import TesseractProbe, default_probe, ensure_tesseract
 
 logger = logging.getLogger("udyam")
@@ -38,6 +44,7 @@ def create_app(
 ) -> FastAPI:
     cfg = settings or get_settings()
     install_pii_log_masking()  # before anything can log
+    install_request_id_logging()
     engine = make_engine(cfg.database_url)
 
     @asynccontextmanager
@@ -78,15 +85,15 @@ def create_app(
         timeout_ms=cfg.lookup_timeout_ms,
     )
     app.state.lookup_service = LookupService(registries, faults)
-    sealer = sealer_from(master, production=is_prod)
+    # Per-person data keys (wrapped by a MASTER_KEY-derived KEK); erasure shreds them.
+    app.state.vault = vault = vault_from(master, production=is_prod)
     app.state.kyc_service = KycService(
-        blobs=BlobStore(cfg.kyc_storage_dir, sealer),
-        sealer=sealer,
+        blobs=BlobStore(cfg.kyc_storage_dir),
+        vault=vault,
         engine=TesseractEngine(cfg.tesseract_cmd),
         registries=registries,
         faults=faults,
         clock=build_clock(cfg),
-        retention_days=cfg.kyc_raw_image_retention_days,
         handoff_after=cfg.kyc_handoff_after_failures,
     )
     app.state.lookup_ip_limiter = SlidingWindowLimiter(
@@ -113,17 +120,19 @@ def create_app(
         limit=cfg.kyc_upload_rate_per_minute, window_seconds=60
     )
 
-    contact_sealer = sealer_from(master, production=is_prod, label=CONTACT_LABEL)
     app.state.otp_service = OtpService(
         otp_keys_from(master, production=is_prod),
         MockSmsSender(),
         ttl=timedelta(seconds=cfg.otp_ttl_seconds),
         max_attempts=cfg.otp_max_attempts,
-        contact_sealer=contact_sealer,
+        phone_max_failures=cfg.otp_phone_max_failures,
+        lockout=timedelta(minutes=cfg.otp_lockout_minutes),
+        contact_sealer=sealer_from(master, production=is_prod, label=CONTACT_LABEL),
+        vault=vault,
     )
     app.state.notify_transport = MockTransport()
     app.state.notifier = OrderNotifier(
-        contact_sealer, app.state.notify_transport, app_url=cfg.public_app_url
+        vault, app.state.notify_transport, app_url=cfg.public_app_url
     )
     app.state.otp_ip_limiter = SlidingWindowLimiter(
         limit=cfg.otp_ip_rate_per_minute, window_seconds=60
@@ -155,13 +164,28 @@ def create_app(
         limit=cfg.backoffice_reveal_rate_per_hour, window_seconds=3600
     )
 
+    # Phase 9: privacy rights and the API-wide per-IP backstop.
+    app.state.privacy_limiter = SlidingWindowLimiter(
+        limit=cfg.privacy_rate_per_minute, window_seconds=60
+    )
+    app.state.api_ip_limiter = SlidingWindowLimiter(
+        limit=cfg.api_ip_rate_per_minute, window_seconds=60
+    )
+
+    # Strict CORS: exact origins (validated in Settings), bearer tokens — no cookies, so
+    # no credentials mode.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cfg.cors_origins,
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Request-ID"],
+        expose_headers=["Retry-After", "X-Request-ID"],
+        max_age=600,
     )
+    # Added last ⇒ outermost: headers land on every response, CORS pre-flights included.
+    app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware, docs_enabled=not is_prod)
     app.include_router(health.router)
     app.include_router(v1_router)
     return app

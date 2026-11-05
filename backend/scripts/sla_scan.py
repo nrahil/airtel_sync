@@ -17,9 +17,9 @@ from sqlalchemy.orm import Session
 from app.config import build_clock, get_settings
 from app.db.session import init_db, make_engine
 from app.domain.catalogue import load_catalogue
-from app.kyc.storage import sealer_from
-from app.orders.notifications import CONTACT_LABEL, MockTransport, OrderNotifier
+from app.orders.notifications import MockTransport, OrderNotifier
 from app.orders.service import TrackerService
+from app.security.vault import vault_from
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -28,9 +28,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     master = cfg.master_key.get_secret_value().encode() if cfg.master_key else None
     production = cfg.environment == "production"
     notifier = OrderNotifier(
-        sealer_from(master, production=production, label=CONTACT_LABEL),
-        MockTransport(),
-        app_url=cfg.public_app_url,
+        vault_from(master, production=production), MockTransport(), app_url=cfg.public_app_url
     )
     tracker = TrackerService(load_catalogue(cfg.data_dir / "product_catalogue.csv"), notifier)
     engine = make_engine(cfg.database_url)

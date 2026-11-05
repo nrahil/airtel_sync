@@ -55,10 +55,12 @@ from app.domain.dataset import Dataset
 from app.domain.leads import DropReason, Lead, Outcome
 from app.kyc.review_queue import ReviewItemNotFoundError, ReviewQueue
 from app.kyc.service import KycService
+from app.kyc.storage import BlobIntegrityError
 from app.orders.eta import CLOSED, age_days, sla_due
 from app.orders.notifications import OrderNotifier
 from app.orders.service import TrackerError, TrackerService
 from app.security.pii_mask import mask_gstin, mask_name
+from app.security.vault import ErasedError, VaultKeyError
 
 log = logging.getLogger("udyam.backoffice")
 
@@ -692,7 +694,10 @@ class BackofficeService:
         app = db.get(KycApplication, ref)
         if app is None:
             raise BackofficeError(404, "NOT_FOUND")
-        ctx = self.kyc.context(app)
+        try:
+            ctx = self.kyc.context(app)
+        except (ErasedError, VaultKeyError, BlobIntegrityError):
+            return {}  # erased (crypto-shredded) or unreadable: nothing to reveal
         values = {
             "contact_name": ctx.contact_name,
             "gstin": ctx.gstin_on_record,

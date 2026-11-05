@@ -28,3 +28,26 @@ test("service worker is served uncached", async ({ request }) => {
   expect(res.ok()).toBe(true);
   expect(res.headers()["cache-control"]).toContain("no-store");
 });
+
+test("AC-09: pages carry the security headers and run cleanly under the CSP", async ({ page }) => {
+  const violations: string[] = [];
+  page.on("console", (msg) => {
+    if (/Content Security Policy|Refused to/i.test(msg.text())) violations.push(msg.text());
+  });
+  for (const path of ["/", "/en/advisor", "/hi/backoffice"]) {
+    const res = await page.goto(path);
+    const headers = res!.headers();
+    const csp = headers["content-security-policy"];
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).not.toContain("unsafe-eval");
+    expect(headers["strict-transport-security"]).toContain("max-age=");
+    expect(headers["x-content-type-options"]).toBe("nosniff");
+    expect(headers["x-frame-options"]).toBe("DENY");
+    expect(headers["referrer-policy"]).toBe("strict-origin-when-cross-origin");
+    expect(headers["x-powered-by"]).toBeUndefined();
+    await expect(page.locator("h1").first()).toBeVisible();
+  }
+  expect(violations).toEqual([]);
+});

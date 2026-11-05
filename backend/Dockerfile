@@ -13,7 +13,7 @@ COPY requirements.lock ./
 RUN pip install --require-hashes -r requirements.lock
 COPY pyproject.toml ./
 COPY app ./app
-COPY scripts/__init__.py scripts/load_data.py scripts/audit_data.py ./scripts/
+COPY scripts/__init__.py scripts/load_data.py scripts/audit_data.py scripts/sla_scan.py scripts/retention_job.py ./scripts/
 RUN pip install --no-deps .
 
 RUN useradd --system --uid 10001 --home /srv app && mkdir -p /srv/data && chown app /srv/data
@@ -22,4 +22,4 @@ USER app
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=3s --retries=5 \
   CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz').status==200 else 1)"
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--no-server-header"]
