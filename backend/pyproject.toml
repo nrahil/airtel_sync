@@ -39,6 +39,7 @@ dev = [
 [tool.setuptools.package-data]
 "app.domain" = ["*.yaml"]
 "app.advisor" = ["prompts/*.txt", "templates/*.json"]
+"app.orders" = ["templates/*.json"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

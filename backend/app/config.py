@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     # Mock payment gateway: random decline rate (resilience testing; 0 in production).
     payment_failure_rate: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
 
+    # Order tracker: links in proactive WhatsApp/SMS updates point at the PWA.
+    public_app_url: str = "http://localhost:3000"
+
     @model_validator(mode="after")
     def _production_guards(self) -> Self:
         if self.environment != "production":

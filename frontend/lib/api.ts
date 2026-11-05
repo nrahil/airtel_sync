@@ -166,9 +166,61 @@ export interface Payment {
   failure_code: string | null;
 }
 
+export type OrderState =
+  | "QUOTE_ACCEPTED"
+  | "KYC_SUBMITTED"
+  | "KYC_ACTION_NEEDED"
+  | "KYC_VERIFIED"
+  | "PAYMENT_CONFIRMED"
+  | "FEASIBILITY_CHECK"
+  | "INSTALL_SCHEDULED"
+  | "INSTALLED"
+  | "ACTIVATED"
+  | "CANCELLED"
+  | "PAYMENT_FAILED"
+  | "NOT_FEASIBLE";
+
+export type StepStatus = "done" | "current" | "attention" | "todo" | "skipped";
+
+export interface Tracker {
+  steps: { state: OrderState; status: StepStatus; at: string | null }[];
+  history: { state: OrderState; at: string }[];
+  lines: { product_id: string; product_name: string; qty: number; install_days: number; eta: string | null }[];
+  eta: string | null;
+  eta_estimated: boolean;
+  sla: { due: string; breached: boolean };
+  kyc: {
+    status: string | null;
+    application_id: string | null;
+    handed_off: boolean;
+    fixes: { reason: string; slot: string | null; message: string }[];
+  };
+  alternative: {
+    product_id: string;
+    product_name: string;
+    replaces: string[];
+    drops: string[];
+    install_days: number;
+    monthly_from_paise: number;
+    monthly_to_paise: number;
+  } | null;
+  refund_due_paise: number;
+  can_cancel: boolean;
+  can_simulate: boolean;
+  notifications: { channel: "WHATSAPP" | "SMS"; state: OrderState; status: "SENT" | "FAILED" | "NO_CONTACT"; at: string }[];
+}
+
+export interface OrderSummary {
+  order_id: string;
+  state: OrderState;
+  created_at: string;
+  eta: string | null;
+  products: string[];
+}
+
 export interface Order {
   order_id: string;
-  state: string;
+  state: OrderState;
   quote_id: string;
   contract_months: number;
   monthly_total_paise: number;
@@ -176,8 +228,10 @@ export interface Order {
   amount_due_now_paise: number;
   lines: { product_id: string; product_name: string; qty: number }[];
   kyc_status: string | null;
-  next_action: "KYC" | "PAY" | "RETRY_PAYMENT" | "NONE";
+  next_action: "KYC" | "FIX_KYC" | "PAY" | "RETRY_PAYMENT" | "CHOOSE_ALTERNATIVE" | "NONE";
   payments: Payment[];
+  created_at?: string;
+  tracker?: Tracker;
 }
 
 export type PaymentMethod = "upi" | "card" | "netbanking";
@@ -316,6 +370,19 @@ export function placeOrder(quoteId: string, idempotencyKey: string): Promise<Ord
 
 export function getOrder(orderId: string): Promise<Order> {
   return call("GET", `/api/v1/orders/${enc(orderId)}`, undefined, { auth: true });
+}
+
+export function listOrders(): Promise<{ orders: OrderSummary[] }> {
+  return call("GET", "/api/v1/orders", undefined, { auth: true });
+}
+
+export function cancelOrder(orderId: string): Promise<Order> {
+  return call("POST", `/api/v1/orders/${enc(orderId)}/cancel`, undefined, { auth: true });
+}
+
+/** Demo only: stands in for operations moving the install forward. */
+export function simulateFulfilment(orderId: string, state: OrderState): Promise<Order> {
+  return call("POST", `/api/v1/orders/${enc(orderId)}/fulfilment`, { state }, { auth: true });
 }
 
 export function payOrder(

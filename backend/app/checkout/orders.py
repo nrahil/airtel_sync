@@ -7,8 +7,8 @@ and is idempotent per (person, Idempotency-Key) (N5, TR-05).
 ``pay`` charges one-time setup + the first month once KYC has passed. A declined
 payment leaves the order in ``PAYMENT_FAILED``, which may be retried with a new
 key (N4). Replaying a key returns the original attempt, never a second charge.
-The full order state machine (guards for every transition, tracker) is Phase 7;
-here only the checkout transitions exist, each written to the audit trail.
+Every state change goes through the order state machine (``app.orders``), which
+audits it, keeps the ETA current and sends the owner a WhatsApp/SMS update.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from app.advisor.service import ProfileIncompleteError
 from app.audit.log import AuditLog
 from app.checkout.quotes import QuoteService, session_profile
-from app.config import IST, Clock
+from app.config import Clock
 from app.db.models import (
     KycApplication,
     KycStatus,
@@ -45,6 +45,7 @@ from app.domain.quotes import (
     verify_integrity,
     verify_quote,
 )
+from app.orders.service import TrackerService, latest_kyc
 
 PaymentMethod = Literal["upi", "card", "netbanking"]
 Simulate = Literal["success", "failure"]
@@ -113,9 +114,12 @@ class MockPaymentGateway:
 
 
 class OrderService:
-    def __init__(self, quotes: QuoteService, gateway: MockPaymentGateway) -> None:
+    def __init__(
+        self, quotes: QuoteService, gateway: MockPaymentGateway, tracker: TrackerService
+    ) -> None:
         self.quotes = quotes
         self.gateway = gateway
+        self.tracker = tracker
 
     # -------------------------------------------------------------- place
 
@@ -184,6 +188,7 @@ class OrderService:
                 entity_id=order.id,
                 detail={"quote_id": row.id, "state": order.state.value},
             )
+            self.tracker.placed(db, clock, order)
             db.commit()
         except IntegrityError:  # a concurrent duplicate won; return its order
             db.rollback()
@@ -207,23 +212,7 @@ class OrderService:
     @staticmethod
     def kyc_application(db: Session, principal: str) -> KycApplication | None:
         """The person's most recent KYC application (a PASS one wins)."""
-        passed = db.scalar(
-            select(KycApplication)
-            .where(
-                KycApplication.principal_token == principal,
-                KycApplication.status == KycStatus.PASS,
-            )
-            .order_by(KycApplication.updated_at.desc())
-            .limit(1)
-        )
-        if passed is not None:
-            return passed
-        return db.scalar(
-            select(KycApplication)
-            .where(KycApplication.principal_token == principal)
-            .order_by(KycApplication.updated_at.desc())
-            .limit(1)
-        )
+        return latest_kyc(db, principal)
 
     def amount_due_now(self, order: Order) -> int:
         return order.quote.setup_total_paise + order.quote.monthly_total_paise
@@ -270,13 +259,15 @@ class OrderService:
         )
         db.add(payment)
         audit = AuditLog(db, clock)
-        if charge.ok:
-            if order.state is not OrderState.KYC_VERIFIED:
-                self._move(audit, order, OrderState.KYC_VERIFIED, principal)
-                order.kyc_verified_on = kyc.updated_at.astimezone(IST).date()
-            self._move(audit, order, OrderState.PAYMENT_CONFIRMED, principal)
-        else:
-            self._move(audit, order, OrderState.PAYMENT_FAILED, principal)
+        machine = self.tracker.machine(db, clock, audit)
+        # KYC passed (checked above) but the order may not have caught up yet.
+        self.tracker.sync_kyc(db, clock, order)
+        machine.transition(
+            order,
+            OrderState.PAYMENT_CONFIRMED if charge.ok else OrderState.PAYMENT_FAILED,
+            actor=principal,
+            reason=charge.failure_code,
+        )
         try:
             db.flush()
             audit.append(
@@ -300,29 +291,13 @@ class OrderService:
             raise CheckoutError(409, "PAYMENT_IN_PROGRESS") from None
         return payment, True
 
-    @staticmethod
-    def _move(audit: AuditLog, order: Order, to: OrderState, actor: str) -> None:
-        audit.append(
-            actor=actor,
-            action="ORDER_STATE",
-            entity_type="order",
-            entity_id=order.id,
-            detail={"from": order.state.value, "to": to.value},
-        )
-        order.state = to
-
     # -------------------------------------------------------------- view
 
-    def view(self, db: Session, order: Order) -> dict[str, Any]:
+    def view(self, db: Session, clock: Clock, order: Order) -> dict[str, Any]:
         quote = order.quote
         lines = quote.payload["lines"]
         kyc = self.kyc_application(db, order.principal_token)
-        if order.state in (OrderState.PAYMENT_FAILED,):
-            next_action = "RETRY_PAYMENT"
-        elif order.state in PAYABLE:
-            next_action = "PAY" if kyc is not None and kyc.status is KycStatus.PASS else "KYC"
-        else:
-            next_action = "NONE"
+        next_action = _next_action(order, kyc)
         return {
             "order_id": order.id,
             "state": order.state.value,
@@ -339,7 +314,24 @@ class OrderService:
             "kyc_status": kyc.status.value if kyc else None,
             "next_action": next_action,
             "payments": [payment_view(p) for p in order.payments],
+            "tracker": self.tracker.view(db, clock, order),
         }
+
+
+def _next_action(order: Order, kyc: KycApplication | None) -> str:
+    """What the owner should do now; ``NONE`` while we are working on it."""
+    state = order.state
+    if state is OrderState.PAYMENT_FAILED:
+        return "RETRY_PAYMENT"
+    if state is OrderState.NOT_FEASIBLE:
+        return "CHOOSE_ALTERNATIVE"
+    if state not in PAYABLE:
+        return "NONE"
+    if kyc is not None and kyc.status is KycStatus.PASS:
+        return "PAY"
+    if kyc is not None and kyc.status in (KycStatus.ACTION_NEEDED, KycStatus.FAIL):
+        return "FIX_KYC"
+    return "KYC"
 
 
 def payment_view(p: Payment) -> dict[str, Any]:

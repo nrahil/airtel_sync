@@ -164,6 +164,61 @@
     "kycRequired": "Please finish document verification before paying.",
     "consentRequired": "Please accept the required consents first.",
     "backToPlan": "Back to my plan",
-    "signIn": "Confirm your number to continue"
+    "signIn": "Confirm your number to continue",
+    "trackLink": "Track this order"
+  },
+  "track": {
+    "title": "Track your order",
+    "listTitle": "Your orders",
+    "noOrders": "No orders on this number yet.",
+    "signIn": "Confirm your number to see your orders",
+    "notFound": "We couldn't find this order on your number.",
+    "orderNumber": "Order {ref}",
+    "eta": "Expected by {date}",
+    "etaEstimated": "Expected around {date} — the clock starts once your documents are verified",
+    "lineEta": "{days} days · by {date}",
+    "slaBreached": "This is taking longer than it should. Our team has been alerted and will call you.",
+    "goToPayment": "Go to payment",
+    "handedOff": "A partner will call you to help with your documents.",
+    "alternative": "{name} works at your site: {from}–{to} a month, installed in about {days} days.",
+    "alternativeReplaces": "It replaces: {items}.",
+    "alternativeDrops": "These need a fixed line and would be removed: {items}.",
+    "startAlternative": "Get a new plan with {name}",
+    "refund": "Refund of {amount} started. It reaches your account in 5–7 working days.",
+    "cancel": "Cancel order",
+    "cancelConfirm": "Yes, cancel",
+    "keep": "Keep order",
+    "updates": "Updates sent to you",
+    "noContact": "We couldn't message you, so updates appear here.",
+    "refresh": "Refresh",
+    "demo": "Demo: move the installation forward",
+    "demoNote": "Demo only — operations do this in real life.",
+    "viewOrder": "View",
+    "states": {
+      "QUOTE_ACCEPTED": "Order received",
+      "KYC_SUBMITTED": "Documents under check",
+      "KYC_ACTION_NEEDED": "Document fix needed",
+      "KYC_VERIFIED": "Documents verified",
+      "PAYMENT_CONFIRMED": "Payment received",
+      "FEASIBILITY_CHECK": "Site check",
+      "INSTALL_SCHEDULED": "Installation booked",
+      "INSTALLED": "Installed",
+      "ACTIVATED": "Services live",
+      "CANCELLED": "Cancelled",
+      "PAYMENT_FAILED": "Payment failed",
+      "NOT_FEASIBLE": "Fibre not available"
+    },
+    "next": {
+      "KYC": "Next: verify your business documents. You pay after verification.",
+      "FIX_KYC": "One of your documents needs a fix:",
+      "PAY": "Your documents are verified. Complete payment to book the installation.",
+      "RETRY_PAYMENT": "Your last payment didn't go through and you weren't charged. You can try again.",
+      "CHOOSE_ALTERNATIVE": "Fibre can't reach your site, but there is a wireless option.",
+      "NONE": "Nothing to do for now — we'll message you at every step."
+    },
+    "channel": {
+      "WHATSAPP": "WhatsApp",
+      "SMS": "SMS"
+    }
   }
 }

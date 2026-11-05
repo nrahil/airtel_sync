@@ -8,6 +8,9 @@
   on expiry, or on first success (single use).
 * Delivery is a mock SMS that logs the masked number only. Outside production the
   code is also returned to the client so the demo works without a phone.
+* So that order updates can reach the owner (Phase 7), the number is sealed with
+  AES-GCM: bound to the challenge until it is verified, then re-sealed onto the
+  identity bound to the principal. Nothing readable is stored.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Clock
 from app.db.models import OtpChallenge, PrincipalIdentity
+from app.kyc.storage import BlobIntegrityError, Sealer
 from app.security.principal import MIN_KEY_BYTES, derive_subkey, new_principal_id
 
 log = logging.getLogger("udyam.otp")
@@ -63,6 +67,15 @@ def normalise_phone(raw: str) -> str:
     if match is None:
         raise InvalidPhoneError("not an Indian mobile number")
     return match.group(1)
+
+
+def contact_aad(principal: str) -> bytes:
+    """A sealed phone opens only for the principal it was sealed for."""
+    return f"contact:{principal}".encode()
+
+
+def _challenge_aad(challenge_id: str) -> bytes:
+    return f"otp-contact:{challenge_id}".encode()
 
 
 def mask_phone(phone: str) -> str:
@@ -121,11 +134,13 @@ class OtpService:
         *,
         ttl: timedelta,
         max_attempts: int,
+        contact_sealer: Sealer | None = None,
     ) -> None:
         self.keys = keys
         self.sender = sender
         self.ttl = ttl
         self.max_attempts = max_attempts
+        self.contact_sealer = contact_sealer
 
     def phone_key(self, raw_phone: str) -> str:
         return self.keys.phone(normalise_phone(raw_phone))
@@ -141,6 +156,10 @@ class OtpService:
         db.flush()  # assigns the id the code is bound to
         code = f"{secrets.randbelow(10**CODE_DIGITS):0{CODE_DIGITS}d}"
         challenge.code_hmac = self.keys.code(challenge.id, code)
+        if self.contact_sealer is not None:
+            challenge.contact_sealed = self.contact_sealer.seal(
+                phone.encode("ascii"), _challenge_aad(challenge.id)
+            )
         db.commit()
         self.sender.send_otp(phone, code)
         return Issued(challenge.id, challenge.phone_hmac, code, int(self.ttl.total_seconds()))
@@ -170,8 +189,23 @@ class OtpService:
             raise OtpError(attempts_left=left)
         challenge.consumed_at = clock.now()
         principal = self._principal_for(db, challenge.phone_hmac)
+        self._keep_contact(db, challenge, principal)
         db.commit()
         return principal
+
+    def _keep_contact(self, db: Session, challenge: OtpChallenge, principal: str) -> None:
+        """Move the sealed phone from the challenge to the identity (for order updates)."""
+        sealed, challenge.contact_sealed = challenge.contact_sealed, None
+        if self.contact_sealer is None or not sealed:
+            return
+        try:
+            phone = self.contact_sealer.open(sealed, _challenge_aad(challenge.id))
+        except BlobIntegrityError:
+            log.warning("sealed OTP contact unreadable; order updates disabled for this sign-in")
+            return
+        identity = db.get(PrincipalIdentity, challenge.phone_hmac)
+        if identity is not None:
+            identity.contact_sealed = self.contact_sealer.seal(phone, contact_aad(principal))
 
     @staticmethod
     def _principal_for(db: Session, phone_hmac: str) -> str:

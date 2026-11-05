@@ -356,3 +356,15 @@ def test_order_has_eta_fields(db: Session) -> None:
     db.add(o)
     db.commit()
     assert o.sla_breached is False
+
+
+def test_init_db_adds_new_nullable_columns_to_an_old_sqlite_file(tmp_path: Path) -> None:
+    """A dev database from an earlier phase keeps working after columns are added."""
+    eng = make_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    init_db(eng)
+    with eng.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE orders DROP COLUMN sla_alerted_at")
+    assert "sla_alerted_at" not in {c["name"] for c in inspect(eng).get_columns("orders")}
+    init_db(eng)
+    assert "sla_alerted_at" in {c["name"] for c in inspect(eng).get_columns("orders")}
+    eng.dispose()

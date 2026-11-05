@@ -227,7 +227,7 @@ export function Checkout({ locale, t }: { locale: Locale; t: Messages }) {
             </dd>
           </dl>
 
-          {order.next_action === "KYC" && (
+          {(order.next_action === "KYC" || order.next_action === "FIX_KYC") && (
             <div className="flex flex-col gap-2 rounded-xl bg-neutral-100 p-3 text-sm dark:bg-neutral-800">
               <p>{t.checkout.kycNext}</p>
               <button type="button" onClick={() => void refreshOrder()} disabled={busy} className="self-start underline">
@@ -272,6 +272,13 @@ export function Checkout({ locale, t }: { locale: Locale; t: Messages }) {
               {t.checkout.paid}
             </p>
           )}
+          <Link
+            href={`/${locale}/track/${encodeURIComponent(order.order_id)}`}
+            data-testid="track-link"
+            className="self-start font-medium underline"
+          >
+            {t.checkout.trackLink}
+          </Link>
         </section>
       )}
 

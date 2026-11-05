@@ -23,6 +23,7 @@ from app.kyc.service import KycService
 from app.kyc.storage import BlobStore, sealer_from
 from app.lookups.registry import FaultInjector, RegistryProvider
 from app.lookups.service import LookupService
+from app.orders.notifications import CONTACT_LABEL, MockTransport, OrderNotifier
 from app.security.pii_mask import install_pii_log_masking
 from app.security.principal import principal_tokens_from
 from app.security.rate_limit import SlidingWindowLimiter
@@ -112,11 +113,17 @@ def create_app(
         limit=cfg.kyc_upload_rate_per_minute, window_seconds=60
     )
 
+    contact_sealer = sealer_from(master, production=is_prod, label=CONTACT_LABEL)
     app.state.otp_service = OtpService(
         otp_keys_from(master, production=is_prod),
         MockSmsSender(),
         ttl=timedelta(seconds=cfg.otp_ttl_seconds),
         max_attempts=cfg.otp_max_attempts,
+        contact_sealer=contact_sealer,
+    )
+    app.state.notify_transport = MockTransport()
+    app.state.notifier = OrderNotifier(
+        contact_sealer, app.state.notify_transport, app_url=cfg.public_app_url
     )
     app.state.otp_ip_limiter = SlidingWindowLimiter(
         limit=cfg.otp_ip_rate_per_minute, window_seconds=60

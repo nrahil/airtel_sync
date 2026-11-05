@@ -92,3 +92,18 @@ def test_audit_cli_reports_malformed_data(
     (data_dir / "smb_leads.csv").unlink()
     assert audit_data.main(["--data-dir", str(data_dir)]) == 1
     assert "not found" in capsys.readouterr().err
+
+
+def test_sla_scan_runs_on_an_empty_database(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from app.config import get_settings
+    from scripts import sla_scan
+
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'scan.db'}")
+    get_settings.cache_clear()
+    try:
+        assert sla_scan.main([]) == 0
+    finally:
+        get_settings.cache_clear()
+    assert "0 order(s) newly breached" in capsys.readouterr().out

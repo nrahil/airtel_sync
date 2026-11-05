@@ -26,6 +26,7 @@ from app.db.models import Order, QuoteStatus, SessionStatus
 from app.db.models import Quote as QuoteRow
 from app.domain.eligibility import MAX_QTY, Item
 from app.domain.quotes import IneligibleBundleError, get_quote_signer
+from app.orders.service import TrackerService
 
 router = APIRouter(prefix="/quotes", tags=["quotes"])
 _build_lock = threading.Lock()
@@ -67,7 +68,8 @@ def checkout_services(request: Request) -> OrderService:
                 adv = advisor(request)
                 quotes = QuoteService(adv.catalogue, adv.policy, get_quote_signer())
                 gateway = MockPaymentGateway(state.settings.payment_failure_rate)
-                service = OrderService(quotes, gateway)
+                tracker = TrackerService(adv.catalogue, state.notifier)
+                service = OrderService(quotes, gateway, tracker)
                 state.order_service = service
     return service
 

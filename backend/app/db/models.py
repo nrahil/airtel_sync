@@ -169,6 +169,18 @@ class ReviewStatus(StrEnum):
     REJECTED = "REJECTED"
 
 
+class NotificationChannel(StrEnum):
+    WHATSAPP = "WHATSAPP"
+    SMS = "SMS"
+    OPS = "OPS"  # back-office alert (SLA breach)
+
+
+class NotificationStatus(StrEnum):
+    SENT = "SENT"
+    FAILED = "FAILED"
+    NO_CONTACT = "NO_CONTACT"  # no sealed contact on file (or it was erased)
+
+
 class VaultField(StrEnum):
     NAME = "NAME"
     PHONE = "PHONE"
@@ -256,12 +268,17 @@ class Order(Base):
     kyc_verified_on: Mapped[date | None]
     eta: Mapped[date | None]
     sla_breached: Mapped[bool] = mapped_column(default=False)
+    sla_alerted_at: Mapped[datetime | None]
+    cancel_reason: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(default=_now)
     updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
 
     quote: Mapped[Quote] = relationship()
     payments: Mapped[list[Payment]] = relationship(
         back_populates="order", order_by="Payment.attempt"
+    )
+    notifications: Mapped[list[OrderNotification]] = relationship(
+        back_populates="order", order_by="OrderNotification.id"
     )
 
 
@@ -288,6 +305,26 @@ class Payment(Base):
     order: Mapped[Order] = relationship(back_populates="payments")
 
 
+class OrderNotification(Base):
+    """One proactive status message (mock WhatsApp/SMS) or back-office alert.
+
+    Holds the template code and state only — never the destination or message text.
+    """
+
+    __tablename__ = "order_notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"), index=True)
+    channel: Mapped[NotificationChannel] = mapped_column(_enum(NotificationChannel))
+    template: Mapped[str] = mapped_column(String(40))
+    state: Mapped[str] = mapped_column(String(32))
+    locale: Mapped[str] = mapped_column(String(8))
+    status: Mapped[NotificationStatus] = mapped_column(_enum(NotificationStatus))
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+
+    order: Mapped[Order] = relationship(back_populates="notifications")
+
+
 # ------------------------------------------------------------------ identity (mock OTP)
 
 
@@ -298,6 +335,8 @@ class PrincipalIdentity(Base):
 
     phone_hmac: Mapped[str] = mapped_column(String(HASH_LEN), primary_key=True)
     principal_token: Mapped[str] = mapped_column(String(64), unique=True)
+    # AES-GCM sealed phone, kept only to send order updates (erased with the person).
+    contact_sealed: Mapped[bytes | None] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(default=_now)
 
 
@@ -311,6 +350,8 @@ class OtpChallenge(Base):
     phone_hmac: Mapped[str] = mapped_column(String(HASH_LEN), index=True)
     code_hmac: Mapped[str] = mapped_column(String(HASH_LEN))
     attempts: Mapped[int] = mapped_column(Integer, default=0)
+    # Sealed phone, moved to the identity on success so order updates can be sent.
+    contact_sealed: Mapped[bytes | None] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(default=_now)
     expires_at: Mapped[datetime]
     consumed_at: Mapped[datetime | None]

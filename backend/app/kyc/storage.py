@@ -60,12 +60,13 @@ class Sealer:
         return "Sealer(<redacted>)"
 
 
-def sealer_from(master_key: bytes | None, *, production: bool) -> Sealer:
+def sealer_from(master_key: bytes | None, *, production: bool, label: bytes = _LABEL) -> Sealer:
+    """A sealer whose key is derived from ``MASTER_KEY`` under a domain ``label``."""
     if master_key is not None:
-        return Sealer(hmac.new(master_key, _LABEL, hashlib.sha256).digest())
+        return Sealer(hmac.new(master_key, label, hashlib.sha256).digest())
     if production:
         raise RuntimeError("MASTER_KEY is required in production")
-    log.warning("MASTER_KEY not set; KYC blobs use an ephemeral key (unreadable after restart)")
+    log.warning("MASTER_KEY not set; %s uses an ephemeral key (unreadable after restart)", label)
     return Sealer(secrets.token_bytes(KEY_BYTES))
 
 

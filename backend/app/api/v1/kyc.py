@@ -18,6 +18,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, guarded
+from app.api.v1.quotes import checkout_services
+from app.config import Clock, get_clock
 from app.db.models import ConsentPurpose, KycApplication
 from app.kyc.messages import fix_message
 from app.kyc.service import KycService, ManualEntryNotAllowedError, NothingOnRecordError
@@ -192,8 +194,11 @@ async def submit(
     request: Request,
     db: Db,
     principal: KycPrincipal,
+    clock: Annotated[Clock, Depends(get_clock)],
     locale: Locale = "en",
 ) -> dict[str, Any]:
     app = _owned(db, principal, application_id)
     await _service(request).submit(db, app, locale)
+    # Orders waiting on KYC move with the verdict (and the owner gets an update).
+    checkout_services(request).tracker.sync_principal(db, clock, principal)
     return _summary(app)
