@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any, Final
 
 from sqlalchemy import select
@@ -285,7 +286,11 @@ class QuoteService:
                 return alt
         return None
 
-    def view(self, row: QuoteRow, profile: BusinessProfile, locale: str) -> dict[str, Any]:
+    def view(
+        self, row: QuoteRow, profile: BusinessProfile, locale: str, now: datetime
+    ) -> dict[str, Any]:
+        """The quote as the PWA shows it. ``expired`` uses the server clock (it honours
+        ``TODAY_OVERRIDE``), so the browser never judges expiry by its own clock."""
         quote = Quote.model_validate(row.payload)
         present = {line.product_id for line in quote.lines}
         qty_in = {line.product_id: line.qty for line in quote.lines}
@@ -327,6 +332,7 @@ class QuoteService:
             "locale": locale,
             "created_at": quote.created_at.isoformat(),
             "valid_until": quote.valid_until.isoformat(),
+            "expired": now >= quote.valid_until,
             "policy_version": quote.policy_version,
             "contract_months": quote.contract_months,
             "required_contract_months": required,

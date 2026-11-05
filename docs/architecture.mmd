@@ -1,0 +1,65 @@
+%% Udyam Digital — components and data flows (as built, Phases 0–10).
+%% Export: npx -p @mermaid-js/mermaid-cli mmdc -i docs/architecture.mmd -o docs/architecture.svg -b white
+flowchart TB
+  classDef ext fill:#fff7ed,stroke:#c2410c,color:#7c2d12
+  classDef store fill:#eef2ff,stroke:#4338ca,color:#1e1b4b
+  classDef pii fill:#fef2f2,stroke:#b91c1c,color:#7f1d1d
+  classDef job fill:#f0fdf4,stroke:#15803d,color:#14532d
+  classDef edge fill:#f5f5f5,stroke:#404040,color:#171717
+
+  owner["Owner on a phone<br/>10 languages · voice input"]
+  staff["Sales · partner · KYC reviewer · admin"]
+  pwa["Next.js 15 PWA<br/>advisor → quote → checkout → KYC → tracker · back-office console<br/>static pages · strict CSP · no PII in browser storage"]:::edge
+  gw["FastAPI /api/v1 gateway<br/>security headers · exact-origin CORS · bearer tokens<br/>request id · per-IP rate backstop · PII-masking logs"]:::edge
+
+  owner --> pwa
+  staff --> pwa
+  pwa ==>|"HTTPS JSON"| gw
+
+  subgraph sell["Discover & buy"]
+    adv["Advisor<br/>slot planner · guided-form fallback<br/>PII redactor · explanation verifier"]
+    engines["Domain engines (pure)<br/>eligibility · recommender · pricing<br/>HMAC-signed, versioned quotes"]
+    checkout["Checkout<br/>mock OTP · consent ledger<br/>idempotent orders · mock payments"]
+  end
+
+  subgraph verify["Verify & activate"]
+    kyc["Smart KYC<br/>upload guard → quality gates → OCR<br/>checksums · registry cross-checks<br/>verdict + plain-language fixes"]
+    lookups["GSTIN / Udyam lookups (mock)"]
+    orders["Order tracker<br/>state machine · ETA · 21-day SLA<br/>WhatsApp → SMS updates (mock)"]
+  end
+
+  subgraph run["Operate & protect"]
+    bo["Back office<br/>RBAC · partner scoping · logged reveal<br/>review queue · unclosed sessions · call list"]
+    prop["Propensity model<br/>pre-contact features only"]
+    privacy["Privacy rights<br/>export · correct · withdraw · erase"]
+  end
+
+  gw --> adv & checkout & kyc & orders & bo & privacy
+  adv --> engines
+  checkout --> engines
+  checkout --> orders
+  kyc --> lookups
+  kyc -->|"verdict"| orders
+  bo --> prop
+  bo -->|"approve / reject"| kyc
+
+  groq[("Groq LLM<br/>outside India")]:::ext
+  tess[("Tesseract 5<br/>on our server")]:::ext
+  adv -->|"redacted chat text only"| groq
+  kyc -->|"images never leave the server"| tess
+
+  csv[("Read-only dataset<br/>catalogue · registries · leads")]:::store
+  db[("App DB<br/>sessions · quotes · orders<br/>consent ledger · hash-chained audit")]:::store
+  vault[("PII vault<br/>per-person AES-256-GCM keys")]:::pii
+  blobs[("Encrypted KYC images")]:::pii
+
+  engines & lookups & prop --> csv
+  checkout & orders & bo --> db
+  kyc -->|"sealed extractions"| vault
+  kyc -->|"sealed images"| blobs
+  privacy -->|"erasure = crypto-shred"| vault
+
+  retention["retention_job · daily<br/>images deleted 7 days after journey end"]:::job
+  sla["sla_scan · scheduled<br/>breach → OPS alert"]:::job
+  retention --> blobs
+  sla --> orders

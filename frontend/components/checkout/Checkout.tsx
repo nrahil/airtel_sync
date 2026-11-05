@@ -230,6 +230,13 @@ export function Checkout({ locale, t }: { locale: Locale; t: Messages }) {
           {(order.next_action === "KYC" || order.next_action === "FIX_KYC") && (
             <div className="flex flex-col gap-2 rounded-xl bg-neutral-100 p-3 text-sm dark:bg-neutral-800">
               <p>{t.checkout.kycNext}</p>
+              <Link
+                href={`/${locale}/kyc?o=${encodeURIComponent(order.order_id)}`}
+                data-testid="kyc-link"
+                className="self-start font-medium underline"
+              >
+                {t.kyc.link}
+              </Link>
               <button type="button" onClick={() => void refreshOrder()} disabled={busy} className="self-start underline">
                 {t.checkout.retry}
               </button>

@@ -121,7 +121,7 @@ def _issue(
         if not evaluation.is_valid:
             body = quotes.ineligible_body(items, evaluation, session.locale)
             if current is not None:
-                body["quote"] = quotes.view(current, profile, session.locale)
+                body["quote"] = quotes.view(current, profile, session.locale, clock.now())
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, body)
     try:
         return quotes.issue(db, clock, session, items, contract_months=contract)
@@ -132,9 +132,9 @@ def _issue(
         raise _invalid(str(exc)) from None
 
 
-def _view(services: OrderService, row: QuoteRow) -> dict[str, Any]:
+def _view(services: OrderService, row: QuoteRow, clock: Clock) -> dict[str, Any]:
     session = row.session
-    return services.quotes.view(row, session_profile(session), session.locale)
+    return services.quotes.view(row, session_profile(session), session.locale, clock.now())
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -143,7 +143,7 @@ def create_quote(
 ) -> dict[str, Any]:
     items = _items(body.items) if body.items is not None else None
     row = _issue(services, db, clock, body.session_id, items, body.contract_months)
-    return _view(services, row)
+    return _view(services, row, clock)
 
 
 @router.get("/{quote_id}")
@@ -169,7 +169,7 @@ def get_quote(
             principal = None
         if principal is None or principal != owner:
             raise HTTPException(status.HTTP_404_NOT_FOUND, {"code": "NOT_FOUND"})
-    return _view(services, row)
+    return _view(services, row, clock)
 
 
 @router.patch("/{quote_id}/items")
@@ -182,4 +182,4 @@ def change_items(
     if row.status is not QuoteStatus.ISSUED or row.session.status is not SessionStatus.QUOTED:
         raise HTTPException(status.HTTP_409_CONFLICT, {"code": "QUOTE_NOT_EDITABLE"})
     new = _issue(services, db, clock, row.session_id, _items(body.items), body.contract_months, row)
-    return _view(services, new)
+    return _view(services, new, clock)

@@ -220,5 +220,51 @@
       "WHATSAPP": "WhatsApp",
       "SMS": "SMS"
     }
+  },
+  "kyc": {
+    "title": "Verify your business",
+    "signIn": "Confirm your number to upload documents",
+    "onRecordIntro": "Tell us what your documents should show. We check each document against these details and the government registries.",
+    "contactName": "Name of the person signing (as on ID)",
+    "gstin": "GSTIN (if you have one)",
+    "udyam": "Udyam number (if you have one)",
+    "privacy": "Your documents are encrypted and only read on our servers — never by the AI helper. Images are deleted 7 days after your service starts.",
+    "start": "Continue to documents",
+    "choose": "Take photo or choose file",
+    "replace": "Replace",
+    "uploading": "Uploading…",
+    "uploaded": "Uploaded",
+    "typed": "Number typed in",
+    "lookedUp": "Verified from registry",
+    "tooLarge": "This file is over 5 MB. Please take a smaller photo.",
+    "wrongType": "Please upload a photo (JPG or PNG) or a PDF.",
+    "manualLabel": "Or type the number",
+    "manualSave": "Save",
+    "lookup": "Verify my Udyam number from the registry instead",
+    "submit": "Check my documents",
+    "checking": "Checking your documents…",
+    "toPayment": "Continue to payment",
+    "toTracker": "Back to my order",
+    "consentNeeded": "Please allow business verification (KYC) first.",
+    "link": "Upload documents",
+    "slots": {
+      "GST_CERTIFICATE": "GST certificate",
+      "UDYAM_CERTIFICATE": "Udyam certificate",
+      "SIGNATORY_ID": "ID of the person signing",
+      "ADDRESS_PROOF": "Address proof"
+    },
+    "hints": {
+      "GST_CERTIFICATE": "GST REG-06, all pages in one photo or PDF",
+      "UDYAM_CERTIFICATE": "Udyam registration certificate",
+      "SIGNATORY_ID": "PAN, Aadhaar, passport or voter ID — must not be expired",
+      "ADDRESS_PROOF": "Electricity or phone bill for the business address, not older than 90 days"
+    },
+    "status": {
+      "PASS": "All documents verified. You can pay now.",
+      "REVIEW": "A member of our team will check your documents within one working day.",
+      "PENDING": "The government registry isn't responding. Please try again in a few minutes.",
+      "ACTION_NEEDED": "A few things need fixing:",
+      "FAIL": "We couldn't verify these documents:"
+    }
   }
 }

@@ -43,6 +43,8 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   // Standalone server only for the Docker image; `next start` is used locally / in CI.
   output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
+  // The live end-to-end build (its own API base) must not overwrite the normal one.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   outputFileTracingRoot: path.join(__dirname),
   poweredByHeader: false,
   reactStrictMode: true,

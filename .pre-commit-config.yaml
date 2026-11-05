@@ -1,6 +1,6 @@
 # Install once:  backend/.venv/Scripts/pre-commit install   (or bin/pre-commit on Linux/macOS)
 # Provided dataset and case files are read-only: never let hooks rewrite them.
-exclude: ^(mock_data/|README\.md$|.*\.(pdf|pptx)$)
+exclude: ^(mock_data/|docs/DATASET\.md$|.*\.(pdf|pptx)$)
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0

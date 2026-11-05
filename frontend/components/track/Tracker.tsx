@@ -141,6 +141,15 @@ export function Tracker({ locale, t, orderId }: { locale: Locale; t: Messages; o
           </ul>
         )}
         {tr.kyc.handed_off && order.next_action === "FIX_KYC" && <p>{t.track.handedOff}</p>}
+        {(order.next_action === "KYC" || order.next_action === "FIX_KYC") && !tr.kyc.handed_off && (
+          <Link
+            href={`/${locale}/kyc?o=${encodeURIComponent(order.order_id)}`}
+            data-testid="kyc-link"
+            className="self-start font-medium underline"
+          >
+            {t.kyc.link}
+          </Link>
+        )}
         {(order.next_action === "PAY" || order.next_action === "RETRY_PAYMENT") && (
           <Link href={`/${locale}/checkout?q=${encodeURIComponent(order.quote_id)}`} className="self-start font-medium underline">
             {t.track.goToPayment}

@@ -95,7 +95,7 @@ export function QuoteScreen({ locale, t }: { locale: Locale; t: Messages }) {
 
   const items: ItemRef[] = quote.lines.map((l) => ({ product_id: l.product_id, qty: l.qty }));
   const chosenContract = quote.contract_months > quote.required_contract_months ? quote.contract_months : null;
-  const expired = Date.now() >= Date.parse(quote.valid_until);
+  const expired = quote.expired ?? Date.now() >= Date.parse(quote.valid_until);
   const editable = quote.status === "ISSUED";
 
   const toggle = (option: ProductOption) => {

@@ -102,6 +102,8 @@ export interface QuoteView {
   locale: string;
   created_at: string;
   valid_until: string;
+  /** Judged by the server clock (which honours TODAY_OVERRIDE), not the browser's. */
+  expired?: boolean;
   contract_months: number;
   required_contract_months: number;
   contract_options: number[];
@@ -402,4 +404,109 @@ export function payOrder(
 export function newKey(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ------------------------------------------------------------------ KYC
+
+export type DocSlot = "GST_CERTIFICATE" | "UDYAM_CERTIFICATE" | "SIGNATORY_ID" | "ADDRESS_PROOF";
+export const DOC_SLOTS: DocSlot[] = ["GST_CERTIFICATE", "UDYAM_CERTIFICATE", "SIGNATORY_ID", "ADDRESS_PROOF"];
+
+export type KycStatus = "DRAFT" | "PASS" | "REVIEW" | "PENDING" | "ACTION_NEEDED" | "FAIL";
+
+export interface KycFix {
+  reason: string;
+  slot: DocSlot | null;
+  message: string;
+}
+
+export interface KycApplication {
+  application_id: string;
+  status: KycStatus;
+  failed_attempts: number;
+  handed_off: boolean;
+  documents: { slot: DocSlot; source: "OCR" | "MANUAL" | "LOOKUP"; uploaded_at: string }[];
+  verdict: {
+    decision: Exclude<KycStatus, "DRAFT">;
+    review_required: boolean;
+    lookup_offered: boolean;
+    handed_off: boolean;
+    checks: { check_id: string; status: string; reason: string | null; slot: DocSlot | null }[];
+    fixes: KycFix[];
+  } | null;
+}
+
+export interface UploadResult {
+  document_id: string;
+  slot: DocSlot;
+  accepted: boolean;
+  reason: string | null;
+  fix: string | null;
+}
+
+/** What the applicant declares "on record"; every field is optional and sealed at rest. */
+export function createKycApplication(onRecord: {
+  contact_name?: string;
+  gstin?: string;
+  udyam_number?: string;
+}): Promise<KycApplication> {
+  return call("POST", "/api/v1/kyc/applications", onRecord, { auth: true });
+}
+
+export function getKycApplication(applicationId: string): Promise<KycApplication> {
+  return call("GET", `/api/v1/kyc/applications/${enc(applicationId)}`, undefined, { auth: true });
+}
+
+/**
+ * Uploads the raw file as the request body: the server reads the type from the bytes
+ * and never sees the file name (UP-06). Rejected files (type, size) throw ApiError.
+ */
+export async function uploadKycDocument(
+  applicationId: string,
+  slot: DocSlot,
+  file: Blob,
+  locale: string,
+): Promise<UploadResult> {
+  const token = getToken();
+  const res = await fetch(
+    `${API_BASE}/api/v1/kyc/applications/${enc(applicationId)}/documents/${slot}?locale=${enc(locale)}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: file,
+    },
+  );
+  const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!res.ok) {
+    const detail = json && typeof json.detail === "object" ? (json.detail as Record<string, unknown>) : json;
+    throw new ApiError(res.status, detail);
+  }
+  return json as unknown as UploadResult;
+}
+
+export function lookupUdyamOnRecord(applicationId: string): Promise<KycApplication> {
+  return call("POST", `/api/v1/kyc/applications/${enc(applicationId)}/udyam/lookup`, undefined, {
+    auth: true,
+  });
+}
+
+export function submitKyc(applicationId: string, locale: string): Promise<KycApplication> {
+  return call(
+    "POST",
+    `/api/v1/kyc/applications/${enc(applicationId)}/submit?locale=${enc(locale)}`,
+    undefined,
+    { auth: true },
+  );
+}
+
+/** N2 fallback: type the GSTIN / Udyam number; a person always reviews it. */
+export function manualEntry(applicationId: string, slot: DocSlot, value: string): Promise<KycApplication> {
+  return call(
+    "POST",
+    `/api/v1/kyc/applications/${enc(applicationId)}/documents/${slot}/manual`,
+    { value },
+    { auth: true },
+  );
 }

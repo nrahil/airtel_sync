@@ -101,9 +101,49 @@ def test_sla_scan_runs_on_an_empty_database(
     from scripts import sla_scan
 
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'scan.db'}")
+    # The committed fixture dataset: mock_data/ is git-ignored and absent in CI.
+    monkeypatch.setenv("DATA_DIR", str(FIXTURE_DATA_DIR))
     get_settings.cache_clear()
     try:
         assert sla_scan.main([]) == 0
     finally:
         get_settings.cache_clear()
     assert "0 order(s) newly breached" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------ e2e_server
+
+
+def test_e2e_server_starts_from_a_clean_slate_with_groq_unreachable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import argparse
+    import os
+
+    from scripts import e2e_server
+
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    state = tmp_path / "live"
+    (state / "kyc_blobs").mkdir(parents=True)
+    (state / "udyam.db").write_text("old run")
+    args = argparse.Namespace(
+        state_dir=str(state), origin=["http://localhost:3101"], groq=False, port=8100
+    )
+    first = e2e_server.configure(args)
+    assert first == state.resolve()
+    assert list(state.iterdir()) == []  # previous run wiped
+    env = os.environ
+    assert env["TODAY_OVERRIDE"] == "2026-07-15"
+    assert env["ENVIRONMENT"] == "development"
+    assert env["GROQ_BASE_URL"].startswith("http://127.0.0.1:9/")
+    assert env["CORS_ORIGINS"] == '["http://localhost:3101"]'
+    key = env["MASTER_KEY"]
+    e2e_server.configure(args)
+    assert os.environ["MASTER_KEY"] != key  # fresh keys every start
+
+
+def test_e2e_server_refuses_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts import e2e_server
+
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    assert e2e_server.main([]) == 2

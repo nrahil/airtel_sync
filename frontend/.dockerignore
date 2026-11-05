@@ -1,5 +1,7 @@
 node_modules
 .next
+.next-live
+e2e-live
 test-results
 playwright-report
 .env*

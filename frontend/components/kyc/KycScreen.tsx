@@ -1,0 +1,416 @@
+"use client";
+
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
+
+import { OtpStep } from "@/components/checkout/OtpStep";
+import {
+  ApiError,
+  DOC_SLOTS,
+  type DocSlot,
+  type KycApplication,
+  type Order,
+  createKycApplication,
+  getKycApplication,
+  getOrder,
+  getToken,
+  lookupUdyamOnRecord,
+  manualEntry,
+  setToken,
+  submitKyc,
+  uploadKycDocument,
+} from "@/lib/api";
+import { type Locale, type Messages } from "@/lib/i18n";
+
+const APP_KEY = "udyam.kyc.application";
+const ACCEPT = "image/png,image/jpeg,application/pdf";
+/** Slots where the applicant may type the number if the photo can't be read (N2 / K04). */
+const MANUAL_SLOTS: DocSlot[] = ["GST_CERTIFICATE", "UDYAM_CERTIFICATE"];
+
+type Phase = "signin" | "loading" | "onRecord" | "documents";
+
+interface SlotState {
+  busy: boolean;
+  /** Immediate problem with this upload (blur, wrong document, too big…). */
+  fix: string | null;
+}
+
+/**
+ * Smart KYC: declare what's on record → upload the four documents → check → fix.
+ * Images go to our server only (never to the AI helper); the verdict comes back as
+ * plain-language fixes per document.
+ */
+export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
+  const orderId = useSearchParams().get("o");
+  const [phase, setPhase] = useState<Phase>("loading");
+  const [order, setOrder] = useState<Order | null>(null);
+  const [app, setApp] = useState<KycApplication | null>(null);
+  const [slots, setSlots] = useState<Partial<Record<DocSlot, SlotState>>>({});
+  const [manual, setManual] = useState<Partial<Record<DocSlot, string>>>({});
+  const [onRecord, setOnRecord] = useState({ contact_name: "", gstin: "", udyam_number: "" });
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [needsConsent, setNeedsConsent] = useState(false);
+
+  const fail = useCallback(
+    (e: unknown) => {
+      if (e instanceof ApiError && e.status === 401) {
+        setToken(null);
+        setPhase("signin");
+        return;
+      }
+      if (e instanceof ApiError && e.status === 403) {
+        setNeedsConsent(true);
+        return;
+      }
+      if (e instanceof ApiError && e.status === 429) {
+        setProblem(t.otp.tooMany);
+        return;
+      }
+      setProblem(t.advisor.error);
+    },
+    [t],
+  );
+
+  const load = useCallback(async () => {
+    setPhase("loading");
+    setProblem(null);
+    try {
+      let known: string | null = sessionStorage.getItem(APP_KEY);
+      if (orderId) {
+        const o = await getOrder(orderId);
+        setOrder(o);
+        known = o.tracker?.kyc.application_id ?? known;
+      }
+      if (known) {
+        try {
+          const found = await getKycApplication(known);
+          sessionStorage.setItem(APP_KEY, found.application_id);
+          setApp(found);
+          setPhase("documents");
+          return;
+        } catch (e) {
+          if (!(e instanceof ApiError && e.status === 404)) throw e;
+          sessionStorage.removeItem(APP_KEY); // someone else's / erased: start fresh
+        }
+      }
+      setPhase("onRecord");
+    } catch (e) {
+      setPhase("onRecord");
+      fail(e);
+    }
+  }, [orderId, fail]);
+
+  useEffect(() => {
+    if (getToken()) void load();
+    else setPhase("signin");
+  }, [load]);
+
+  const start = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setProblem(null);
+    try {
+      const body = Object.fromEntries(
+        Object.entries(onRecord)
+          .map(([k, v]) => [k, v.trim()])
+          .filter(([, v]) => v),
+      );
+      const created = await createKycApplication(body);
+      sessionStorage.setItem(APP_KEY, created.application_id);
+      setApp(created);
+      setPhase("documents");
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setSlot = (slot: DocSlot, state: SlotState) => setSlots((s) => ({ ...s, [slot]: state }));
+
+  const upload = async (slot: DocSlot, file: File | undefined) => {
+    if (!app || !file) return;
+    setSlot(slot, { busy: true, fix: null });
+    setProblem(null);
+    try {
+      const res = await uploadKycDocument(app.application_id, slot, file, locale);
+      setSlot(slot, { busy: false, fix: res.accepted ? null : res.fix });
+      setApp(await getKycApplication(app.application_id));
+    } catch (e) {
+      const code = e instanceof ApiError ? e.code : null;
+      const known: Record<string, string> = {
+        FILE_TOO_LARGE: t.kyc.tooLarge,
+        UNSUPPORTED_TYPE: t.kyc.wrongType,
+        IMAGE_DIMENSIONS_REJECTED: t.kyc.wrongType,
+      };
+      if (code && code in known) setSlot(slot, { busy: false, fix: known[code] });
+      else if (e instanceof ApiError && e.status === 415) setSlot(slot, { busy: false, fix: t.kyc.wrongType });
+      else {
+        setSlot(slot, { busy: false, fix: null });
+        fail(e);
+      }
+    }
+  };
+
+  const saveManual = async (slot: DocSlot) => {
+    if (!app) return;
+    const value = (manual[slot] ?? "").trim();
+    if (!value) return;
+    setBusy(true);
+    try {
+      setApp(await manualEntry(app.application_id, slot, value));
+      setManual((m) => ({ ...m, [slot]: "" }));
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const lookup = async () => {
+    if (!app) return;
+    setBusy(true);
+    try {
+      setApp(await lookupUdyamOnRecord(app.application_id));
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const check = async () => {
+    if (!app) return;
+    setBusy(true);
+    setProblem(null);
+    try {
+      const checked = await submitKyc(app.application_id, locale);
+      setApp(checked);
+      setSlots({});
+      if (orderId) setOrder(await getOrder(orderId).catch(() => order));
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const consentLink = (
+    <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
+      {t.kyc.consentNeeded}{" "}
+      <Link href={`/${locale}/consent`} className="font-medium underline">
+        {t.consent.title}
+      </Link>
+    </p>
+  );
+
+  if (phase === "signin") {
+    return (
+      <>
+        <p className="text-sm font-medium">{t.kyc.signIn}</p>
+        <OtpStep t={t} onVerified={() => void load()} />
+      </>
+    );
+  }
+  if (phase === "loading") return <p className="text-neutral-500">{t.advisor.thinking}</p>;
+
+  if (phase === "onRecord") {
+    return (
+      <form onSubmit={(e) => void start(e)} className="flex flex-col gap-3" data-testid="kyc-on-record">
+        <p className="text-sm text-neutral-600 dark:text-neutral-300">{t.kyc.onRecordIntro}</p>
+        {(
+          [
+            ["contact_name", t.kyc.contactName, "name"],
+            ["gstin", t.kyc.gstin, "off"],
+            ["udyam_number", t.kyc.udyam, "off"],
+          ] as const
+        ).map(([key, label, autoComplete]) => (
+          <label key={key} className="flex flex-col gap-1 text-sm font-medium">
+            {label}
+            <input
+              name={key}
+              value={onRecord[key]}
+              autoComplete={autoComplete}
+              maxLength={key === "contact_name" ? 120 : 25}
+              onChange={(e) => setOnRecord((r) => ({ ...r, [key]: e.target.value }))}
+              className={`h-11 rounded-lg px-3 font-normal ring-1 ring-neutral-300 dark:bg-neutral-900 dark:ring-neutral-600 ${
+                key === "contact_name" ? "" : "uppercase"
+              }`}
+            />
+          </label>
+        ))}
+        <p className="text-xs text-neutral-500">{t.kyc.privacy}</p>
+        <button type="submit" disabled={busy} className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50">
+          {t.kyc.start}
+        </button>
+        {needsConsent && consentLink}
+        {problem && (
+          <p role="alert" className="text-sm text-red-700">
+            {problem}
+          </p>
+        )}
+      </form>
+    );
+  }
+
+  if (!app) return null;
+  // A new upload puts the application back to DRAFT; the last verdict's fixes stay
+  // visible for the documents not replaced since.
+  const verdict = app.status === "DRAFT" ? null : app.verdict;
+  const uploaded = new Map(app.documents.map((d) => [d.slot, d]));
+  const fixesFor = (slot: DocSlot | null) =>
+    slot && slots[slot] ? [] : (app.verdict?.fixes ?? []).filter((f) => f.slot === slot);
+  const passed = app.status === "PASS";
+  const canFix = app.status === "ACTION_NEEDED" || app.status === "FAIL";
+
+  return (
+    <div className="flex flex-col gap-5">
+      {verdict && (
+        <section
+          role="status"
+          data-testid="kyc-verdict"
+          data-decision={app.status}
+          className={`flex flex-col gap-2 rounded-xl p-3 text-sm ${
+            passed
+              ? "bg-green-50 text-green-900 dark:bg-green-950 dark:text-green-100"
+              : "bg-amber-50 text-amber-900 dark:bg-amber-950 dark:text-amber-100"
+          }`}
+        >
+          <p className="font-semibold">{t.kyc.status[verdict.decision]}</p>
+          {fixesFor(null).length > 0 && (
+            <ul className="list-disc ps-5" data-testid="kyc-general-fixes">
+              {fixesFor(null).map((f) => (
+                <li key={f.reason}>{f.message}</li>
+              ))}
+            </ul>
+          )}
+          {app.handed_off && <p>{t.track.handedOff}</p>}
+          {verdict.lookup_offered && (
+            <button type="button" disabled={busy} onClick={() => void lookup()} className="self-start font-medium underline">
+              {t.kyc.lookup}
+            </button>
+          )}
+          {passed && order && (
+            <Link
+              href={`/${locale}/checkout?q=${encodeURIComponent(order.quote_id)}`}
+              data-testid="kyc-to-payment"
+              className="self-start font-medium underline"
+            >
+              {t.kyc.toPayment}
+            </Link>
+          )}
+        </section>
+      )}
+
+      {!passed && (
+        <ul className="flex flex-col gap-3" data-testid="kyc-slots">
+          {DOC_SLOTS.map((slot) => {
+            const doc = uploaded.get(slot);
+            const state = slots[slot];
+            const fixes = fixesFor(slot);
+            const inputId = `kyc-file-${slot}`;
+            return (
+              <li
+                key={slot}
+                data-testid={`kyc-slot-${slot}`}
+                className="flex flex-col gap-2 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-700"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium">{t.kyc.slots[slot]}</p>
+                    <p className="text-xs text-neutral-500">{t.kyc.hints[slot]}</p>
+                  </div>
+                  {doc && !state?.fix && (
+                    <span data-testid="kyc-slot-done" className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-900 dark:bg-green-900 dark:text-green-100">
+                      {doc.source === "MANUAL" ? t.kyc.typed : doc.source === "LOOKUP" ? t.kyc.lookedUp : t.kyc.uploaded}
+                    </span>
+                  )}
+                </div>
+                {state?.fix && (
+                  <p role="alert" data-testid="kyc-upload-fix" className="text-sm text-red-700">
+                    {state.fix}
+                  </p>
+                )}
+                {fixes.length > 0 && (
+                  <ul className="list-disc ps-5 text-sm text-amber-900 dark:text-amber-100" data-testid="kyc-fixes">
+                    {fixes.map((f) => (
+                      <li key={f.reason}>{f.message}</li>
+                    ))}
+                  </ul>
+                )}
+                <label
+                  htmlFor={inputId}
+                  className="self-start rounded-lg px-3 py-2 text-sm font-medium ring-1 ring-neutral-300 dark:ring-neutral-600"
+                >
+                  {state?.busy ? t.kyc.uploading : doc ? t.kyc.replace : t.kyc.choose}
+                </label>
+                <input
+                  id={inputId}
+                  data-testid={`kyc-file-${slot}`}
+                  type="file"
+                  accept={ACCEPT}
+                  capture="environment"
+                  disabled={state?.busy || busy}
+                  className="sr-only"
+                  onChange={(e) => {
+                    void upload(slot, e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                />
+                {canFix && MANUAL_SLOTS.includes(slot) && fixes.length > 0 && (
+                  <div className="flex gap-2">
+                    <input
+                      aria-label={t.kyc.manualLabel}
+                      placeholder={t.kyc.manualLabel}
+                      value={manual[slot] ?? ""}
+                      maxLength={25}
+                      onChange={(e) => setManual((m) => ({ ...m, [slot]: e.target.value }))}
+                      className="h-10 min-w-0 flex-1 rounded-lg px-3 text-sm uppercase ring-1 ring-neutral-300 dark:bg-neutral-900 dark:ring-neutral-600"
+                    />
+                    <button
+                      type="button"
+                      disabled={busy || !(manual[slot] ?? "").trim()}
+                      onClick={() => void saveManual(slot)}
+                      className="rounded-lg px-3 text-sm font-medium ring-1 ring-neutral-300 disabled:opacity-50 dark:ring-neutral-600"
+                    >
+                      {t.kyc.manualSave}
+                    </button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {!passed && (
+        <>
+          <p className="text-xs text-neutral-500">{t.kyc.privacy}</p>
+          <button
+            type="button"
+            data-testid="kyc-submit"
+            disabled={busy || app.documents.length === 0}
+            onClick={() => void check()}
+            className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50"
+          >
+            {busy ? t.kyc.checking : t.kyc.submit}
+          </button>
+        </>
+      )}
+
+      {needsConsent && consentLink}
+      {problem && (
+        <p role="alert" className="text-sm text-red-700">
+          {problem}
+        </p>
+      )}
+      {orderId && (
+        <Link href={`/${locale}/track/${encodeURIComponent(orderId)}`} className="self-start text-sm underline">
+          {t.kyc.toTracker}
+        </Link>
+      )}
+    </div>
+  );
+}

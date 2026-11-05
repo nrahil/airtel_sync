@@ -574,9 +574,12 @@ def test_pr_07_row_edited_around_the_payload_is_rejected(client: TestClient) -> 
 def test_pr_07_j4_expired_quote_rejected_then_repriced(client: TestClient) -> None:
     sid = quoted_session(client)
     q = new_quote(client, sid)
+    assert q["expired"] is False
     later = Shifted(timedelta(days=8))
     app: Any = client.app
     app.dependency_overrides[get_clock] = lambda: later
+    # Expiry is judged by the server clock (TODAY_OVERRIDE), never the browser's.
+    assert client.get(f"{QUOTES}/{q['quote_id']}").json()["expired"] is True
     headers = bearer(client, clock=later)
     consent(client, headers)
     r = place(client, headers, q["quote_id"], key())
