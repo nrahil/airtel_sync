@@ -1,0 +1,7 @@
+# Known non-secrets in history (fingerprint = commit:file:rule:line).
+# Phase 10 e2e launcher: a placeholder Groq key (the base URL points at a closed port)
+# and the throw-away demo staff password. Neither is a credential; both were removed
+# or marked `gitleaks:allow` in the following commit.
+6f991e628edd2f93493bb7697ecb150fcf8e407d:backend/scripts/e2e_server.py:generic-api-key:83
+6f991e628edd2f93493bb7697ecb150fcf8e407d:backend/scripts/e2e_server.py:generic-api-key:30
+6f991e628edd2f93493bb7697ecb150fcf8e407d:frontend/e2e-live/journeys.spec.ts:generic-api-key:203

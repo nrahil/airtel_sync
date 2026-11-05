@@ -200,7 +200,7 @@ test("E2E-05: with Groq down the guided form completes the journey to a priced q
 test("back office: sales sees the ranked call list and the model's holdout AUC", async ({ page }) => {
   await page.goto("/en/backoffice");
   await page.getByLabel("Username").fill("sales");
-  await page.getByLabel("Password").fill(process.env.BACKOFFICE_DEMO_PASSWORD ?? "demo-password-2026");
+  await page.getByLabel("Password").fill(process.env.BACKOFFICE_DEMO_PASSWORD ?? "demo-password-2026"); // gitleaks:allow (demo users)
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByTestId("staff-who")).toContainText("sales");
   const leads = page.getByTestId("lead");

@@ -27,7 +27,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
-DEFAULT_PASSWORD: Final = "demo-password-2026"  # noqa: S105 - throw-away demo users only
+DEFAULT_PASSWORD: Final = "demo-password-2026"  # noqa: S105  gitleaks:allow - throw-away demo users
 _WINDOWS_TESSERACT: Final = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
 
 _RAISED_LIMITS: Final = {
@@ -80,7 +80,7 @@ def configure(args: argparse.Namespace) -> Path:
     }
     if not args.groq:
         env |= {
-            "GROQ_API_KEY": "e2e-groq-unreachable",
+            "GROQ_API_KEY": "disabled",  # any non-empty value; the base URL is closed
             "GROQ_BASE_URL": "http://127.0.0.1:9/openai/v1",
             "GROQ_TIMEOUT_SECONDS": "1",
         }
