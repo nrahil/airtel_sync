@@ -210,9 +210,9 @@ class OrderService:
     # -------------------------------------------------------------- pay
 
     @staticmethod
-    def kyc_application(db: Session, principal: str) -> KycApplication | None:
-        """The person's most recent KYC application (a PASS one wins)."""
-        return latest_kyc(db, principal)
+    def kyc_application(db: Session, order: Order) -> KycApplication | None:
+        """The KYC behind this order (see ``latest_kyc``)."""
+        return latest_kyc(db, order)
 
     def amount_due_now(self, order: Order) -> int:
         return order.quote.setup_total_paise + order.quote.monthly_total_paise
@@ -235,7 +235,7 @@ class OrderService:
             return existing, False
         if order.state not in PAYABLE:
             raise CheckoutError(409, "ORDER_NOT_PAYABLE", state=order.state.value)
-        kyc = self.kyc_application(db, principal)
+        kyc = self.kyc_application(db, order)
         if kyc is None or kyc.status is not KycStatus.PASS:
             raise CheckoutError(
                 409, "KYC_NOT_VERIFIED", kyc_status=kyc.status.value if kyc else None
@@ -296,7 +296,7 @@ class OrderService:
     def view(self, db: Session, clock: Clock, order: Order) -> dict[str, Any]:
         quote = order.quote
         lines = quote.payload["lines"]
-        kyc = self.kyc_application(db, order.principal_token)
+        kyc = self.kyc_application(db, order)
         next_action = _next_action(order, kyc)
         return {
             "order_id": order.id,

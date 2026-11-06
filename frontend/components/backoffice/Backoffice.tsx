@@ -402,7 +402,12 @@ function Sessions({ t, me }: { t: T; me: StaffMe }) {
       {data.sessions.length === 0 && <p>{t.empty}</p>}
       <ul className="flex flex-col gap-3">
         {data.sessions.map((s: SessionRow) => (
-          <li key={s.session_id} className={`${card} flex flex-col gap-2`} data-testid="session">
+          <li
+            key={s.session_id}
+            className={`${card} flex flex-col gap-2 ${s.callback_requested_at ? "ring-2 ring-red-700" : ""}`}
+            data-testid="session"
+            data-callback={s.callback_requested_at ? "true" : undefined}
+          >
             <div className="flex flex-wrap items-center gap-2">
               <Score score={s.score} t={t} />
               <span className="font-semibold">{t.sessions.reasons[s.stall_reason] ?? s.stall_reason}</span>

@@ -168,3 +168,147 @@ test("all 10 languages render and unknown locales 404", async ({ page, request }
   await expect(nav.getByRole("link")).toHaveCount(10);
   expect((await request.get("/fr/advisor")).status()).toBe(404);
 });
+
+// ------------------------------------------------------------------ simpler journey
+
+test("plan first: progress, then the plan with its assumptions and an optional fine-tune", async ({ page }) => {
+  const sent: unknown[] = [];
+  await mockApi(page, (body) => {
+    sent.push(body);
+    if (body && "locale" in body) {
+      return turn({ locale: "en", mode: "form", progress: { step: 1, total: 3 } });
+    }
+    if (body && body.action === "refine") {
+      return turn({
+        locale: "en",
+        mode: "form",
+        progress: { step: 1, total: 3 },
+        question: { slot: "num_sites", kind: "number", options: [], min: 1, max: 50 },
+      });
+    }
+    return turn({
+      locale: "en",
+      status: "QUOTED",
+      mode: "form",
+      question: null,
+      recommendation,
+      progress: null,
+      assumed: ["num_sites", "has_gstin", "needs"],
+      can_refine: true,
+    });
+  });
+  await page.goto("/en/advisor");
+  await expect(page.getByTestId("journey-steps")).toHaveAttribute("data-step", "1");
+  await expect(page.getByTestId("progress")).toHaveText("Question 1 of 3");
+  await page.getByRole("button", { name: "Professional office" }).click();
+
+  const assumed = page.getByTestId("assumed");
+  await expect(assumed).toContainText("one location");
+  await expect(assumed).toContainText("GST registration not confirmed yet");
+  await page.getByTestId("refine").click();
+  expect(sent.at(-1)).toEqual({ action: "refine" });
+  await expect(page.getByLabel("Enter a number")).toBeVisible();
+
+  // Fine-tune questions can be skipped: "Not sure — pick for me".
+  await page.getByTestId("not-sure").click();
+  expect(sent.at(-1)).toEqual({ slot: "num_sites", unsure: true });
+});
+
+test("needs: suggestions for this kind of business come first, pre-ticked; the rest behind 'see all'", async ({ page }) => {
+  const sent: unknown[] = [];
+  await mockApi(page, (body) => {
+    sent.push(body);
+    if (body && "locale" in body) {
+      return turn({
+        locale: "en",
+        mode: "form",
+        question: {
+          slot: "needs",
+          kind: "multi",
+          options: ["internet", "wifi", "website", "failover", "static_ip"],
+          min: null,
+          max: null,
+          suggested: ["wifi", "website"],
+        },
+      });
+    }
+    return turn({ locale: "en", mode: "form", status: "QUOTED", question: null, recommendation });
+  });
+  await page.goto("/en/advisor");
+  const suggested = page.getByTestId("suggested-needs");
+  await expect(suggested.getByRole("button", { pressed: true })).toHaveCount(2);
+  await expect(suggested).toContainText("Wi-Fi for staff and customers");
+  await expect(page.getByRole("button", { name: /Fixed internet address/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "See all options" }).click();
+  await expect(page.getByRole("button", { name: /Fixed internet address/ })).toBeVisible();
+  await suggested.getByRole("button", { name: /A simple website/ }).click(); // untick one
+  await page.getByTestId("form-needs").getByRole("button", { name: "Next", exact: true }).click();
+  expect(sent.at(-1)).toEqual({ slot: "needs", value: ["wifi"] });
+});
+
+test("resume link (?s=) picks the session back up", async ({ page }) => {
+  let resumed = false;
+  await page.route("**/api/v1/advisor/sessions/abc-123", async (route) => {
+    resumed = route.request().method() === "GET";
+    await route.fulfill({
+      json: turn({
+        session_id: "abc-123",
+        locale: "en",
+        mode: "form",
+        messages: [{ role: "assistant", kind: "notice", text: "Welcome back! Let's carry on where you left off." }],
+        question: { slot: "city", kind: "text", options: [], min: null, max: null },
+        progress: { step: 2, total: 3 },
+      }),
+    });
+  });
+  await page.goto("/en/advisor?s=abc-123");
+  await expect(page.getByTestId("transcript")).toContainText("Welcome back!");
+  await expect(page.getByTestId("progress")).toHaveText("Question 2 of 3");
+  expect(resumed).toBe(true);
+  expect(new URL(page.url()).search).toBe("");
+});
+
+test("help: 'call me' confirms the number first, then asks for the call", async ({ page }) => {
+  const help: unknown[] = [];
+  await mockApi(page, () => turn({ locale: "en", mode: "form" }));
+  await page.route("**/api/v1/auth/otp/request", (route) =>
+    route.fulfill({ status: 202, json: { challenge_id: "c1", expires_in: 300, dev_code: "123456" } }),
+  );
+  await page.route("**/api/v1/auth/otp/verify", (route) =>
+    route.fulfill({ json: { token: "v1.p_test.123.sig", expires_in: 3600 } }),
+  );
+  await page.route("**/api/v1/advisor/sessions/*/help", async (route) => {
+    help.push({ body: route.request().postDataJSON(), auth: route.request().headers()["authorization"] });
+    await route.fulfill({ json: { kind: "callback", status: "REQUESTED" } });
+  });
+  await page.goto("/en/advisor");
+  const panel = page.getByTestId("help-panel");
+  await panel.getByRole("button", { name: "Have someone call me" }).click();
+  await expect(panel).toContainText("used only for this");
+  await panel.getByLabel("Mobile number").fill("9876543210");
+  await panel.getByRole("button", { name: "Send code" }).click();
+  await panel.getByLabel("6-digit code").fill("123456");
+  await panel.getByRole("button", { name: "Verify" }).click();
+  await expect(page.getByTestId("help-done")).toContainText("will call you soon");
+  expect(help).toEqual([{ body: { kind: "callback", agree: true }, auth: "Bearer v1.p_test.123.sig" }]);
+});
+
+test("the plan card lists the suggested extras by name", async ({ page }) => {
+  await mockApi(page, () =>
+    turn({
+      locale: "en",
+      status: "QUOTED",
+      mode: "form",
+      question: null,
+      recommendation: {
+        ...recommendation,
+        addons: [{ product_id: "P22", product_name: "Secure Wi-Fi with Guest Network", qty: 1, source: "NEED" }],
+      },
+      assumed: [],
+      can_refine: false,
+    }),
+  );
+  await page.goto("/en/advisor");
+  await expect(page.getByTestId("suggested-extras")).toContainText("Secure Wi-Fi with Guest Network");
+  await expect(page.getByTestId("refine")).toHaveCount(0);
+});

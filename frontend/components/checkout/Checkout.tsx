@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ConsentForm } from "@/components/checkout/ConsentForm";
 import { OtpStep } from "@/components/checkout/OtpStep";
+import { JourneySteps } from "@/components/JourneySteps";
 import {
   ApiError,
   type ConsentState,
@@ -159,8 +160,12 @@ export function Checkout({ locale, t }: { locale: Locale; t: Messages }) {
     </Link>
   );
 
+  const pays = order?.next_action === "PAY" || order?.next_action === "RETRY_PAYMENT";
+  const journey = pays ? 4 : order ? 3 : 2;
+
   return (
     <div className="flex flex-col gap-5">
+      <JourneySteps t={t} current={journey} />
       {quote && step !== "order" && (
         <section
           data-testid="checkout-summary"

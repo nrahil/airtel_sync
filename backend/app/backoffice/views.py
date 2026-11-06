@@ -376,7 +376,10 @@ class BackofficeService:
     def sessions(
         self, db: Session, clock: Clock, staff: Staff, *, idle_minutes: int
     ) -> dict[str, Any]:
-        """Advisor journeys that stopped short (J1), newest first, with why they stalled."""
+        """Advisor journeys that stopped short (J1), newest first, with why they stalled.
+
+        Owners who asked to be called come first, at once (no idle wait).
+        """
         staff.require(Perm.LEADS_READ)
         now = clock.now()
         cutoff = now - timedelta(minutes=idle_minutes)
@@ -387,7 +390,11 @@ class BackofficeService:
                     (SessionStatus.ACTIVE, SessionStatus.QUOTED, SessionStatus.CHECKOUT)
                 )
             )
-            .order_by(AdvisorSession.updated_at.desc())
+            # Callback requests first, however old; then the newest journeys.
+            .order_by(
+                AdvisorSession.callback_requested_at.is_(None),
+                AdvisorSession.updated_at.desc(),
+            )
         )
         assigned = self._assignments(db, LeadKind.SESSION)
         if is_scoped(staff.role):
@@ -403,9 +410,12 @@ class BackofficeService:
         for s in sessions:
             order = orders.get(s.id)
             last = max(s.updated_at, order.updated_at) if order else s.updated_at
-            if last > cutoff:
+            callback = s.callback_requested_at
+            if last > cutoff and callback is None:
                 continue  # still in progress
             reason, at_question = self.stall_reason(s, quotes.get(s.id), order, now)
+            if callback is not None:
+                reason = "CALLBACK_REQUESTED"
             if reason is None:
                 continue
             slots = (s.slots or {}).get("slots", {})
@@ -438,12 +448,14 @@ class BackofficeService:
                     "order_id": order.id if order else None,
                     "order_state": order.state.value if order else None,
                     "contactable": bool(s.principal_token and s.principal_token in reachable),
+                    "callback_requested_at": callback.isoformat() if callback else None,
                     "assigned_partner": assigned.get(s.id),
                     **_score_view(self.score(session_features(slots))),
                 }
             )
             if len(rows) >= _SESSION_LIMIT:
                 break
+        rows.sort(key=lambda r: r["callback_requested_at"] is None)  # stable: callbacks first
         return {"idle_minutes": idle_minutes, "sessions": rows}
 
     # -------------------------------------------------------------- assignments

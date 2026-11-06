@@ -5,28 +5,34 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { OtpStep } from "@/components/checkout/OtpStep";
+import { JourneySteps } from "@/components/JourneySteps";
 import {
   ApiError,
   DOC_SLOTS,
   type DocSlot,
+  type GstinPreview,
   type KycApplication,
   type Order,
   createKycApplication,
   getKycApplication,
   getOrder,
   getToken,
+  lookupGstinOnRecord,
   lookupUdyamOnRecord,
   manualEntry,
+  previewGstin,
+  requestKycVisit,
   setToken,
   submitKyc,
   uploadKycDocument,
 } from "@/lib/api";
-import { type Locale, type Messages } from "@/lib/i18n";
+import { type Locale, type Messages, fill } from "@/lib/i18n";
 
 const APP_KEY = "udyam.kyc.application";
 const ACCEPT = "image/png,image/jpeg,application/pdf";
 /** Slots where the applicant may type the number if the photo can't be read (N2 / K04). */
 const MANUAL_SLOTS: DocSlot[] = ["GST_CERTIFICATE", "UDYAM_CERTIFICATE"];
+const GSTIN_LENGTH = 15;
 
 type Phase = "signin" | "loading" | "onRecord" | "documents";
 
@@ -52,6 +58,8 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [needsConsent, setNeedsConsent] = useState(false);
+  // "Is this your business?" — masked registry preview of the GSTIN typed in.
+  const [gstPreview, setGstPreview] = useState<GstinPreview | "none" | null>(null);
 
   const fail = useCallback(
     (e: unknown) => {
@@ -76,23 +84,33 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
   const load = useCallback(async () => {
     setPhase("loading");
     setProblem(null);
+    // A different order may be a different business: drop the previous one's state.
+    setApp(null);
+    setSlots({});
+    setManual({});
+    setOnRecord({ contact_name: "", gstin: "", udyam_number: "" });
+    setGstPreview(null);
     try {
-      let known: string | null = sessionStorage.getItem(APP_KEY);
+      let known: string | null;
       if (orderId) {
+        // Only this order's own KYC. Never fall back to an application remembered from
+        // an earlier order: that may be a different business (GSTIN / Udyam).
         const o = await getOrder(orderId);
         setOrder(o);
-        known = o.tracker?.kyc.application_id ?? known;
+        known = o.tracker?.kyc.application_id ?? null;
+      } else {
+        known = sessionStorage.getItem(APP_KEY);
       }
       if (known) {
         try {
           const found = await getKycApplication(known);
-          sessionStorage.setItem(APP_KEY, found.application_id);
+          if (!orderId) sessionStorage.setItem(APP_KEY, found.application_id);
           setApp(found);
           setPhase("documents");
           return;
         } catch (e) {
           if (!(e instanceof ApiError && e.status === 404)) throw e;
-          sessionStorage.removeItem(APP_KEY); // someone else's / erased: start fresh
+          if (!orderId) sessionStorage.removeItem(APP_KEY); // someone else's / erased: start fresh
         }
       }
       setPhase("onRecord");
@@ -117,8 +135,8 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
           .map(([k, v]) => [k, v.trim()])
           .filter(([, v]) => v),
       );
-      const created = await createKycApplication(body);
-      sessionStorage.setItem(APP_KEY, created.application_id);
+      const created = await createKycApplication(orderId ? { ...body, order_id: orderId } : body);
+      if (!orderId) sessionStorage.setItem(APP_KEY, created.application_id);
       setApp(created);
       setPhase("documents");
     } catch (e) {
@@ -181,6 +199,49 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
     }
   };
 
+  /** Check a GSTIN online in place of a certificate photo (or the Udyam number in place of its certificate). */
+  const verifyOnline = async (slot: DocSlot) => {
+    if (!app) return;
+    setBusy(true);
+    setProblem(null);
+    try {
+      const call = slot === "GST_CERTIFICATE" ? lookupGstinOnRecord : lookupUdyamOnRecord;
+      setApp(await call(app.application_id));
+      setSlot(slot, { busy: false, fix: null });
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const askVisit = async () => {
+    if (!app) return;
+    setBusy(true);
+    setProblem(null);
+    try {
+      setApp(await requestKycVisit(app.application_id));
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const checkGstin = async (value: string) => {
+    const gstin = value.replace(/\s/g, "").toUpperCase();
+    if (gstin.length !== GSTIN_LENGTH) {
+      setGstPreview(null);
+      return;
+    }
+    try {
+      setGstPreview(await previewGstin(gstin));
+    } catch (e) {
+      // Not found / malformed: say so. Anything else (rate limit, outage): stay quiet.
+      setGstPreview(e instanceof ApiError && (e.status === 404 || e.status === 422) ? "none" : null);
+    }
+  };
+
   const check = async () => {
     if (!app) return;
     setBusy(true);
@@ -206,9 +267,12 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
     </p>
   );
 
+  const steps = <JourneySteps t={t} current={app?.status === "PASS" ? 4 : 3} />;
+
   if (phase === "signin") {
     return (
       <>
+        {steps}
         <p className="text-sm font-medium">{t.kyc.signIn}</p>
         <OtpStep t={t} onVerified={() => void load()} />
       </>
@@ -219,6 +283,7 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
   if (phase === "onRecord") {
     return (
       <form onSubmit={(e) => void start(e)} className="flex flex-col gap-3" data-testid="kyc-on-record">
+        {steps}
         <p className="text-sm text-neutral-600 dark:text-neutral-300">{t.kyc.onRecordIntro}</p>
         {(
           [
@@ -235,12 +300,27 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
               autoComplete={autoComplete}
               maxLength={key === "contact_name" ? 120 : 25}
               onChange={(e) => setOnRecord((r) => ({ ...r, [key]: e.target.value }))}
+              onBlur={key === "gstin" ? (e) => void checkGstin(e.target.value) : undefined}
               className={`h-11 rounded-lg px-3 font-normal ring-1 ring-neutral-300 dark:bg-neutral-900 dark:ring-neutral-600 ${
                 key === "contact_name" ? "" : "uppercase"
               }`}
             />
           </label>
         ))}
+        {gstPreview && (
+          <p
+            data-testid="gst-preview"
+            className={`rounded-lg p-2 text-sm ${
+              gstPreview === "none"
+                ? "bg-amber-50 text-amber-900 dark:bg-amber-950 dark:text-amber-100"
+                : "bg-green-50 text-green-900 dark:bg-green-950 dark:text-green-100"
+            }`}
+          >
+            {gstPreview === "none"
+              ? t.kyc.gstNotFound
+              : fill(t.kyc.gstFound, { name: gstPreview.trade_name, state: gstPreview.state })}
+          </p>
+        )}
         <p className="text-xs text-neutral-500">{t.kyc.privacy}</p>
         <button type="submit" disabled={busy} className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50">
           {t.kyc.start}
@@ -265,8 +345,14 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
   const passed = app.status === "PASS";
   const canFix = app.status === "ACTION_NEEDED" || app.status === "FAIL";
 
+  // Numbers given on record can be checked online instead of photographing a certificate.
+  const onlineFor = (slot: DocSlot) =>
+    (slot === "GST_CERTIFICATE" && app.on_record?.gstin) ||
+    (slot === "UDYAM_CERTIFICATE" && app.on_record?.udyam);
+
   return (
     <div className="flex flex-col gap-5">
+      {steps}
       {verdict && (
         <section
           role="status"
@@ -346,6 +432,17 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
                 >
                   {state?.busy ? t.kyc.uploading : doc ? t.kyc.replace : t.kyc.choose}
                 </label>
+                {!doc && onlineFor(slot) && (
+                  <button
+                    type="button"
+                    data-testid={`kyc-online-${slot}`}
+                    disabled={busy}
+                    onClick={() => void verifyOnline(slot)}
+                    className="self-start text-left text-sm font-medium text-red-700 underline disabled:opacity-50"
+                  >
+                    {slot === "GST_CERTIFICATE" ? t.kyc.verifyGst : t.kyc.verifyUdyam}
+                  </button>
+                )}
                 <input
                   id={inputId}
                   data-testid={`kyc-file-${slot}`}
@@ -397,6 +494,28 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
           >
             {busy ? t.kyc.checking : t.kyc.submit}
           </button>
+          <section
+            data-testid="kyc-visit"
+            className="flex flex-col gap-1 rounded-xl bg-neutral-50 p-3 text-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-700"
+          >
+            {app.handed_off ? (
+              <p role="status">{t.kyc.visitDone}</p>
+            ) : (
+              <>
+                <p className="font-medium">{t.kyc.visitTitle}</p>
+                <p className="text-neutral-600 dark:text-neutral-300">{t.kyc.visitBody}</p>
+                <button
+                  type="button"
+                  data-testid="kyc-visit-ask"
+                  disabled={busy}
+                  onClick={() => void askVisit()}
+                  className="self-start font-medium text-red-700 underline disabled:opacity-50"
+                >
+                  {t.kyc.visitAsk}
+                </button>
+              </>
+            )}
+          </section>
         </>
       )}
 

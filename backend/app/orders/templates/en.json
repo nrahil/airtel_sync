@@ -13,5 +13,6 @@
     "CANCELLED": "Order cancelled. Any amount paid will be refunded.",
     "PAYMENT_FAILED": "Payment did not go through. You can try again from the link.",
     "NOT_FEASIBLE": "Fibre is not available at your site. Open the link to see the wireless option."
-  }
+  },
+  "resume": "Udyam Digital: carry on choosing your business plan where you left off: {link}"
 }

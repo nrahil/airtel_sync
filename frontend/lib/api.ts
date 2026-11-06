@@ -11,7 +11,12 @@ export interface Question {
   min: number | null;
   max: number | null;
   suggestions?: string[];
+  /** For `needs`: what businesses of this kind usually add (shown first, pre-ticked). */
+  suggested?: string[];
 }
+
+/** Fine-tune questions: the owner may answer "Not sure — pick for me". */
+export const REFINE_SLOTS = ["num_sites", "has_gstin", "needs"] as const;
 
 export interface AssistantMessage {
   role: "assistant";
@@ -47,6 +52,8 @@ export interface Recommendation {
     alternative: string | null;
   }[];
   explanation: { text: string; source: "llm" | "template" };
+  /** Optional extras (incl. what the owner asked for): priced once switched on in the quote. */
+  addons?: { product_id: string; product_name?: string; qty: number; source: string }[];
 }
 
 export interface TurnResponse {
@@ -57,6 +64,11 @@ export interface TurnResponse {
   messages: AssistantMessage[];
   question: Question | null;
   recommendation: Recommendation | null;
+  /** "Question 2 of 3"; null once the plan is shown. */
+  progress: { step: number; total: number } | null;
+  /** What the plan assumes until fine-tuned: `num_sites`, `has_gstin`, `needs`. */
+  assumed: string[];
+  can_refine: boolean;
 }
 
 // ------------------------------------------------------------------ quotes
@@ -311,6 +323,34 @@ export function sendAnswer(sessionId: string, slot: string, value: unknown): Pro
   return call("POST", `/api/v1/advisor/sessions/${enc(sessionId)}/turns`, { slot, value });
 }
 
+/** "Not sure — pick for me" for a fine-tune question. */
+export function sendUnsure(sessionId: string, slot: string): Promise<TurnResponse> {
+  return call("POST", `/api/v1/advisor/sessions/${enc(sessionId)}/turns`, { slot, unsure: true });
+}
+
+/** Ask the questions skipped so far, to fine-tune the plan shown. */
+export function refinePlan(sessionId: string): Promise<TurnResponse> {
+  return call("POST", `/api/v1/advisor/sessions/${enc(sessionId)}/turns`, { action: "refine" });
+}
+
+/** Pick up a saved session (resume link). */
+export function resumeSession(sessionId: string): Promise<TurnResponse> {
+  return call("GET", `/api/v1/advisor/sessions/${enc(sessionId)}`);
+}
+
+/** Needs a signed-in (OTP-confirmed) owner: a call back, or a link texted to carry on later. */
+export function askForHelp(
+  sessionId: string,
+  kind: "callback" | "resume_link",
+): Promise<{ kind: string; status: "REQUESTED" | "SENT" | "FAILED" }> {
+  return call(
+    "POST",
+    `/api/v1/advisor/sessions/${enc(sessionId)}/help`,
+    { kind, agree: true },
+    { auth: true },
+  );
+}
+
 export function createQuote(
   sessionId: string,
   items?: ItemRef[],
@@ -433,6 +473,8 @@ export interface KycApplication {
     checks: { check_id: string; status: string; reason: string | null; slot: DocSlot | null }[];
     fixes: KycFix[];
   } | null;
+  /** Which numbers the owner gave (never the values): offers "verify online". */
+  on_record?: { gstin: boolean; udyam: boolean };
 }
 
 export interface UploadResult {
@@ -448,6 +490,8 @@ export function createKycApplication(onRecord: {
   contact_name?: string;
   gstin?: string;
   udyam_number?: string;
+  /** The order this KYC is for; it is then never reused for another order. */
+  order_id?: string;
 }): Promise<KycApplication> {
   return call("POST", "/api/v1/kyc/applications", onRecord, { auth: true });
 }
@@ -484,6 +528,35 @@ export async function uploadKycDocument(
     throw new ApiError(res.status, detail);
   }
   return json as unknown as UploadResult;
+}
+
+/** Verify the GSTIN given on record in the GST registry instead of uploading a certificate. */
+export function lookupGstinOnRecord(applicationId: string): Promise<KycApplication> {
+  return call("POST", `/api/v1/kyc/applications/${enc(applicationId)}/gst/lookup`, undefined, {
+    auth: true,
+  });
+}
+
+/** Ask for someone to visit and collect the documents instead of uploading. */
+export function requestKycVisit(applicationId: string): Promise<KycApplication> {
+  return call("POST", `/api/v1/kyc/applications/${enc(applicationId)}/visit`, undefined, {
+    auth: true,
+  });
+}
+
+export interface GstinPreview {
+  outcome: "FOUND";
+  gstin: string;
+  status: string;
+  /** Masked by the server (anti-enumeration), e.g. "B***** D**** C***". */
+  legal_name: string;
+  trade_name: string;
+  state: string;
+}
+
+/** Masked registry preview of a GSTIN ("is this your business?"). Throws on 404 / 422. */
+export function previewGstin(gstin: string): Promise<GstinPreview> {
+  return call("GET", `/api/v1/lookup/gstin/${enc(gstin)}`, undefined, { auth: true });
 }
 
 export function lookupUdyamOnRecord(applicationId: string): Promise<KycApplication> {

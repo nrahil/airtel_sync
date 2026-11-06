@@ -563,3 +563,69 @@ def test_model_endpoint_reports_holdout_metrics(client: TestClient) -> None:
     assert body["split"] == {"train": "2026-04..2026-05", "test": "2026-06"}
     assert {"auc", "baseline_gstin_auc", "lift_top_decile"} <= set(body["metrics"])
     assert body["top_coefficients"]
+
+
+# ------------------------------------------------------------------ "call me" / "text me a link"
+
+
+def test_call_me_puts_the_owner_first_on_the_sessions_list(client: TestClient) -> None:
+    sales = staff(client, "sales", StaffRole.SALES)
+    sid = quoted_session(client)
+    other = quoted_session(client)
+    help_url = f"{ADVISOR}/{sid}/help"
+    body = {"kind": "callback", "agree": True}
+
+    assert client.post(help_url, json=body).status_code == 401  # needs a confirmed number
+    customer, _ = otp_login(client, PHONE)
+    refused = {"kind": "callback", "agree": False}
+    assert client.post(help_url, json=refused, headers=customer).status_code == 422
+    r = client.post(help_url, json=body, headers=customer)
+    assert r.status_code == 200, r.text
+    assert r.json() == {"kind": "callback", "status": "REQUESTED"}
+    client.post(help_url, json=body, headers=customer)  # idempotent
+    assert len(audit_rows(client, "CALLBACK_REQUESTED")) == 1
+
+    # Shown at once — no idle wait — and before every other journey.
+    rows = client.get(f"{BO}/sessions?idle_minutes=0", headers=sales).json()["sessions"]
+    assert rows[0]["session_id"] == sid
+    assert rows[0]["stall_reason"] == "CALLBACK_REQUESTED"
+    assert rows[0]["contactable"] is True
+    assert rows[0]["callback_requested_at"] is not None
+    assert other in {r["session_id"] for r in rows}
+    fresh = client.get(f"{BO}/sessions", headers=sales).json()["sessions"]
+    assert [r["session_id"] for r in fresh] == [sid]
+    assert PHONE.replace(" ", "") not in str(rows)
+
+    reveal = {"kind": "SESSION", "ref": sid, "reason": "CALL_BACK"}
+    r = client.post(f"{BO}/reveal", json=reveal, headers=sales)
+    assert r.json()["fields"] == {"phone": "9876543210"}
+
+    # Someone else can't attach themselves to this session.
+    stranger, _ = otp_login(client, "91234 56789")
+    assert client.post(help_url, json=body, headers=stranger).status_code == 404
+
+
+def test_text_me_a_link_sends_the_resume_link(client: TestClient) -> None:
+    sid = client.post(ADVISOR, json={"locale": "hi", "mode": "form"}).json()["session_id"]
+    customer, _ = otp_login(client, PHONE)
+    r = client.post(
+        f"{ADVISOR}/{sid}/help", json={"kind": "resume_link", "agree": True}, headers=customer
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "SENT"
+    app: Any = client.app
+    sent = list(app.state.notify_transport.outbox)[-1]
+    assert f"/hi/advisor?s={sid}" in sent.text
+    assert sent.text.startswith("उद्यम डिजिटल")
+    assert client.get(f"{ADVISOR}/{sid}").json()["question"]["slot"] == "segment"
+
+
+def test_help_needs_a_confirmed_number(client: TestClient) -> None:
+    from tests.api.test_checkout import bearer
+
+    sid = quoted_session(client)
+    r = client.post(
+        f"{ADVISOR}/{sid}/help", json={"kind": "resume_link", "agree": True}, headers=bearer(client)
+    )
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "NO_CONTACT"

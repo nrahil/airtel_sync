@@ -12,6 +12,7 @@ export function RecommendationCard({
   t: Messages;
 }) {
   const { pricing, blocked, explanation } = recommendation;
+  const extras = (recommendation.addons ?? []).filter((a) => a.product_name);
   return (
     <article
       data-testid="recommendation"
@@ -53,6 +54,17 @@ export function RecommendationCard({
           {pricing.contract_months} {t.quote.months}
         </dd>
       </dl>
+
+      {extras.length > 0 && (
+        <section>
+          <h3 className="text-sm font-semibold">{t.quote.suggestedExtras}</h3>
+          <ul className="mt-1 flex flex-col gap-1 text-sm text-neutral-700 dark:text-neutral-300" data-testid="suggested-extras">
+            {extras.map((a) => (
+              <li key={a.product_id}>+ {a.product_name}</li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {blocked.length > 0 && (
         <section>

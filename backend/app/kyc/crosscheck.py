@@ -281,6 +281,16 @@ class _Evaluator:
                 slot=slot,
                 evidence=ev,
             )
+        elif doc.source is Source.LOOKUP:
+            # No certificate photo: the GSTIN the owner gave is checked in the registry.
+            # The ID and the bill are still checked against that registry record below.
+            self.out.add(
+                "gst.gstin",
+                CheckStatus.PASS,
+                KycReason.GSTIN_VERIFIED_BY_LOOKUP,
+                slot=slot,
+                evidence=ev,
+            )
         elif res.status is IdStatus.CORRECTED:
             fixes = [
                 {"position": c.position + 1, "read": c.read, "corrected": c.corrected}

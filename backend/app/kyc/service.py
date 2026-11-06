@@ -30,7 +30,7 @@ from app.kyc.crosscheck import evaluate
 from app.kyc.extract import extract_document
 from app.kyc.ocr import OcrEngine, OcrUnavailableError
 from app.kyc.review_queue import ReviewQueue
-from app.kyc.storage import BlobStore, Sealer
+from app.kyc.storage import BlobIntegrityError, BlobStore, Sealer
 from app.kyc.types import (
     ApplicationContext,
     Check,
@@ -51,7 +51,7 @@ from app.lookups.registry import (
     RegistryProvider,
     RegistryUnavailableError,
 )
-from app.security.vault import Vault
+from app.security.vault import ErasedError, Vault, VaultKeyError
 
 log = logging.getLogger("udyam.kyc")
 
@@ -135,8 +135,15 @@ class KycService:
 
     # -------------------------------------------------------------- applications
 
-    def create(self, db: Session, principal: str, ctx: ApplicationContext) -> KycApplication:
-        app = KycApplication(principal_token=principal, context_sealed=b"")
+    def create(
+        self,
+        db: Session,
+        principal: str,
+        ctx: ApplicationContext,
+        *,
+        order_id: str | None = None,
+    ) -> KycApplication:
+        app = KycApplication(principal_token=principal, order_id=order_id, context_sealed=b"")
         db.add(app)
         db.flush()  # assigns the id used as associated data
         self.set_context(app, ctx)
@@ -210,6 +217,41 @@ class KycService:
             blob_key=existing.blob_key if existing else None,
             sha256=existing.image_sha256 if existing else None,
         )
+
+    def verify_gstin_on_record(self, db: Session, app: KycApplication) -> None:
+        """No certificate photo: verify the GSTIN the owner gave against the registry.
+
+        The registry record then stands in for the certificate: the signatory's ID and
+        the address proof are still checked against it at submit.
+        """
+        number = self.context(app).gstin_on_record
+        if not number:
+            raise NothingOnRecordError("no GSTIN on record")
+        self._store(
+            db,
+            app,
+            Extraction(
+                slot=DocSlot.GST_CERTIFICATE, source=Source.LOOKUP, identifier_reads=(number,)
+            ),
+        )
+
+    def request_visit(self, db: Session, app: KycApplication) -> None:
+        """The owner would rather someone visits and collects the documents (J7, early)."""
+        if not app.handed_off:
+            log.info("KYC visit requested by the owner")
+        app.handed_off = True
+        ReviewQueue(db, self.clock).enqueue(
+            app, ReviewKind.HANDOFF, [KycReason.VISIT_REQUESTED.value]
+        )
+        db.commit()
+
+    def on_record(self, app: KycApplication) -> dict[str, bool]:
+        """Which identifiers the owner gave (never the values): drives "verify online"."""
+        try:
+            ctx = self.context(app)
+        except (ErasedError, BlobIntegrityError, VaultKeyError):  # erased / unreadable
+            return {"gstin": False, "udyam": False}
+        return {"gstin": bool(ctx.gstin_on_record), "udyam": bool(ctx.udyam_on_record)}
 
     def verify_udyam_on_record(self, db: Session, app: KycApplication) -> None:
         """K05: no certificate uploaded, but we hold a Udyam number — verify by lookup."""

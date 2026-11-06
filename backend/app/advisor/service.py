@@ -25,8 +25,14 @@ from typing import Any, Final
 
 from app.advisor import messages as msg
 from app.advisor.fallback_flow import coerce_answer, question_payload
-from app.advisor.groq_client import LlmClient, LlmUnavailableError
-from app.advisor.planner import finalise_soft, next_slot
+from app.advisor.groq_client import LlmBadOutputError, LlmClient, LlmUnavailableError
+from app.advisor.planner import (
+    DEFAULT_SITES,
+    essentials,
+    finalise_soft,
+    next_slot,
+    suggested_needs,
+)
 from app.advisor.redactor import redact
 from app.advisor.slots import (
     InvalidLlmOutputError,
@@ -71,6 +77,16 @@ _INJECTION: Final = re.compile(
     re.I,
 )
 
+# "I don't know / you choose" — the owner wants us to pick (also asked of the model).
+_UNSURE: Final = re.compile(
+    r"\b(?:not sure|unsure|no idea|don'?t know|dunno|you (?:decide|choose|pick|suggest|recommend)"
+    r"|recomm?end|suggest|whatever (?:is|you)|anything (?:is )?fine|pata nahi|nahi pata"
+    r"|maloom nahi|aap (?:batao|bataiye|decide))\b"
+    r"|पता नहीं|नहीं पता|मालूम नहीं|माहीत नाही|आप बताइए|आप बताओ|आप तय"
+    r"|ಗೊತ್ತಿಲ್ಲ|ખબર નથી|తెలియదు|தெரியாது|জানি না|ਪਤਾ ਨਹੀਂ|അറിയില്ല",
+    re.I,
+)
+
 
 class Mode(StrEnum):
     CHAT = "chat"
@@ -85,6 +101,7 @@ class State:
     mode: Mode = Mode.CHAT
     pending: str | None = None
     locale: str = "en"
+    refining: bool = False  # the owner asked to fine-tune the plan
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -94,6 +111,7 @@ class State:
             "mode": self.mode.value,
             "pending": self.pending,
             "locale": self.locale,
+            "refining": self.refining,
         }
 
     @classmethod
@@ -107,6 +125,7 @@ class State:
             mode=Mode(data["mode"]),
             pending=data.get("pending"),
             locale=data.get("locale", "en"),
+            refining=bool(data.get("refining", False)),
         )
 
     @property
@@ -137,18 +156,14 @@ class ProfileIncompleteError(ValueError):
 
 def profile_from_slots(slots: Slots) -> BusinessProfile:
     """The engines' profile from advisor slots — the one place this mapping lives."""
-    if (
-        slots.segment is None
-        or slots.employee_count is None
-        or slots.num_sites is None
-        or slots.city_tier not in (1, 2)
-    ):
+    if slots.segment is None or slots.employee_count is None or slots.city_tier not in (1, 2):
         raise ProfileIncompleteError("profile is incomplete")
     return BusinessProfile.model_validate(
         {
             "segment": slots.segment,
             "employee_count": slots.employee_count,
-            "num_sites": slots.num_sites,
+            # Not asked yet (plan first, fine-tune later): one site until told otherwise.
+            "num_sites": slots.num_sites if slots.num_sites is not None else DEFAULT_SITES,
             "city_tier": slots.city_tier,
             # Claimed GSTINs stay UNVERIFIED until KYC confirms them in the registry.
             "gstin_state": GstinState.UNVERIFIED if slots.has_gstin else GstinState.NONE,
@@ -232,6 +247,11 @@ class AdvisorService:
                 json_mode=True,
             )
             extracted = parse_llm_slots(raw)
+        except (InvalidLlmOutputError, LlmBadOutputError):
+            log.info("advisor: discarded non-JSON slot output")
+            self._apply(reply, hints)
+            await self._advance(reply)  # deterministic re-ask (LL-03); stay in chat
+            return reply
         except LlmUnavailableError:
             state.mode = Mode.FORM
             reply.stall_reason = "LLM_UNAVAILABLE"
@@ -239,24 +259,39 @@ class AdvisorService:
             self._apply(reply, hints)
             await self._advance(reply)
             return reply
-        except InvalidLlmOutputError:
-            log.info("advisor: discarded non-JSON slot output")
-            self._apply(reply, hints)
-            await self._advance(reply)  # deterministic re-ask (LL-03)
-            return reply
 
         if extracted.rejected:
             reply.say(msg.notice("INVALID_VALUE", state.locale), "notice")
-        self._apply(reply, {**extracted.values, **hints})
+        values = {**extracted.values, **hints}
+        pending = SlotName(state.pending) if state.pending else None
+        if (
+            pending is not None
+            # An empty answer ("needs": []) next to "not sure / you recommend" is no answer.
+            and values.get(pending.value) in (None, (), [])
+            and (extracted.unsure or _UNSURE.search(text))
+        ):
+            values.pop(pending.value, None)
+            values.update(self._unsure(reply, pending))
+        self._apply(reply, values)
         await self._advance(reply)
         return reply
 
-    async def answer(self, state: State, slot: SlotName, value: Any) -> Reply:
-        """Guided-form answer for one slot (also usable mid-chat)."""
+    async def answer(
+        self, state: State, slot: SlotName, value: Any, *, unsure: bool = False
+    ) -> Reply:
+        """Guided-form answer for one slot (also usable mid-chat).
+
+        ``unsure`` is the "Not sure — pick for me" button: a sensible default for a
+        fine-tune question, a gentle re-ask for one the plan can't do without.
+        """
         reply = Reply(state)
         if state.turns >= FORM_TURN_CAP:
             raise TurnCapError
         state.turns += 1
+        if unsure:
+            self._apply(reply, self._unsure(reply, slot))
+            await self._advance(reply, rephrase=False)
+            return reply
         try:
             clean = coerce_answer(slot, value)
         except ValueError:
@@ -267,7 +302,37 @@ class AdvisorService:
         await self._advance(reply, rephrase=False)
         return reply
 
+    async def refine(self, state: State) -> Reply:
+        """The owner wants to fine-tune the plan: ask the questions skipped so far."""
+        reply = Reply(state)
+        if state.turns >= FORM_TURN_CAP:
+            raise TurnCapError
+        state.refining = True
+        reply.say(msg.notice("REFINE", state.locale), "notice")
+        await self._advance(reply, rephrase=state.mode is Mode.CHAT)
+        return reply
+
+    async def resume(self, state: State) -> Reply:
+        """Pick up a saved session (resume link): the current question or the plan."""
+        reply = Reply(state)
+        reply.say(msg.notice("WELCOME_BACK", state.locale), "notice")
+        await self._advance(reply, rephrase=False, offline=True)
+        return reply
+
     # -------------------------------------------------------------- internals
+
+    def _unsure(self, reply: Reply, slot: SlotName) -> dict[str, Any]:
+        """Values to apply when the owner doesn't know ``slot`` (and the notice to show)."""
+        state = reply.state
+        if slot in essentials(state.slots):
+            reply.say(msg.notice("UNSURE_ROUGH", state.locale), "notice")
+            return {}  # the plan needs it: re-asked, a rough answer is fine
+        reply.say(msg.notice("UNSURE_PICKED", state.locale), "notice")
+        if slot.value not in state.asked:
+            state.asked.append(slot.value)  # soft: never asked again
+        if slot is SlotName.NEEDS:
+            return {"needs": tuple(suggested_needs(state.slots))}
+        return {}  # sites: assume one; GST: unknown (GSTIN-only products stay blocked)
 
     def _update_locale(self, reply: Reply, text: str) -> None:
         state = reply.state
@@ -298,9 +363,10 @@ class AdvisorService:
 
     async def _advance(self, reply: Reply, *, rephrase: bool = True, offline: bool = False) -> None:
         state = reply.state
-        slot = next_slot(state.slots, state.asked_set)
+        slot = next_slot(state.slots, state.asked_set, refining=state.refining)
         if slot is None:
             state.pending = None
+            state.refining = False
             reply.recommendation = await self._recommend(state, use_llm=not offline)
             reply.say(msg.notice("DONE", state.locale), "notice")
             reply.say(reply.recommendation["explanation"]["text"], "explanation")
@@ -309,7 +375,7 @@ class AdvisorService:
         phrase = rephrase and not offline
         text = await self._question(slot, state) if phrase else msg.question(slot, state.locale)
         reply.say(text, "question")
-        reply.question = question_payload(slot, self.cities)
+        reply.question = question_payload(slot, self.cities, state.slots)
 
     async def _question(self, slot: SlotName, state: State) -> str:
         template = msg.question(slot, state.locale)
@@ -374,7 +440,14 @@ class AdvisorService:
         return {
             "profile_fingerprint": profile.fingerprint(),
             "pricing": breakdown.model_dump(mode="json"),
-            "addons": [a.model_dump(mode="json") for a in rec.addons],
+            # Optional extras (incl. the owner's stated needs): priced only once switched on.
+            "addons": [
+                {
+                    **a.model_dump(mode="json"),
+                    "product_name": self.catalogue[a.product_id].product_name,
+                }
+                for a in rec.addons
+            ],
             "blocked": [
                 {
                     "product_id": b.product_id,

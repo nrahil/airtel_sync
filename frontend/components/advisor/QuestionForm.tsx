@@ -2,11 +2,42 @@
 
 import { useState } from "react";
 
-import type { Question } from "@/lib/api";
+import { type Question, REFINE_SLOTS } from "@/lib/api";
 import type { Messages } from "@/lib/i18n";
 
-/** Guided-form input for one slot. Labels come from the locale catalogue, keyed by option code. */
-export function QuestionForm({
+/**
+ * Guided-form input for one slot. Labels come from the locale catalogue, keyed by option code.
+ * Fine-tune questions also offer "Not sure — pick for me" (`onUnsure`).
+ */
+export function QuestionForm(props: {
+  question: Question;
+  t: Messages;
+  disabled: boolean;
+  onAnswer: (slot: string, value: unknown, label: string) => void;
+  onUnsure?: (slot: string, label: string) => void;
+}) {
+  const { question, t, disabled, onUnsure } = props;
+  const unsure =
+    onUnsure && (REFINE_SLOTS as readonly string[]).includes(question.slot) ? (
+      <button
+        type="button"
+        disabled={disabled}
+        data-testid="not-sure"
+        onClick={() => onUnsure(question.slot, t.advisor.notSure)}
+        className="self-start text-sm text-red-700 underline disabled:opacity-50"
+      >
+        {t.advisor.notSure}
+      </button>
+    ) : null;
+  return (
+    <div className="flex flex-col gap-2">
+      <Input {...props} />
+      {unsure}
+    </div>
+  );
+}
+
+function Input({
   question,
   t,
   disabled,
@@ -17,8 +48,11 @@ export function QuestionForm({
   disabled: boolean;
   onAnswer: (slot: string, value: unknown, label: string) => void;
 }) {
+  const suggested = question.suggested ?? [];
   const [text, setText] = useState("");
-  const [picked, setPicked] = useState<string[]>([]);
+  // Suggestions for businesses like this one start ticked; the owner can untick them.
+  const [picked, setPicked] = useState<string[]>(suggested);
+  const [showAll, setShowAll] = useState(suggested.length === 0);
   const labels = labelsFor(question.slot, t);
   const label = (code: string) => labels[code] ?? code;
   const button =
@@ -46,27 +80,49 @@ export function QuestionForm({
           </button>
         </div>
       );
-    case "multi":
+    case "multi": {
+      const others = question.options.filter((code) => !suggested.includes(code));
+      const chip = (code: string) => {
+        const on = picked.includes(code);
+        return (
+          <button
+            key={code}
+            type="button"
+            aria-pressed={on}
+            disabled={disabled}
+            onClick={() => setPicked((p) => (on ? p.filter((c) => c !== code) : [...p, code]))}
+            className={`rounded-xl border px-3 py-2 text-left text-sm ${on ? "border-red-700 bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-200" : "border-neutral-300 dark:border-neutral-600"}`}
+          >
+            {on ? "✓ " : ""}
+            {label(code)}
+          </button>
+        );
+      };
       return (
         <div className="grid gap-2" data-testid={`form-${question.slot}`}>
-          <p className="text-sm text-neutral-500">{t.advisor.selectAny}</p>
-          <div className="flex flex-wrap gap-2">
-            {question.options.map((code) => {
-              const on = picked.includes(code);
-              return (
-                <button
-                  key={code}
-                  type="button"
-                  aria-pressed={on}
-                  disabled={disabled}
-                  onClick={() => setPicked((p) => (on ? p.filter((c) => c !== code) : [...p, code]))}
-                  className={`rounded-full border px-3 py-1.5 text-sm ${on ? "border-red-700 bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-200" : "border-neutral-300 dark:border-neutral-600"}`}
-                >
-                  {label(code)}
-                </button>
-              );
-            })}
-          </div>
+          {suggested.length > 0 && (
+            <>
+              <p className="text-sm font-medium">{t.advisor.suggestedTitle}</p>
+              <div className="flex flex-col gap-2" data-testid="suggested-needs">
+                {suggested.map(chip)}
+              </div>
+            </>
+          )}
+          {showAll ? (
+            <>
+              <p className="text-sm text-neutral-500">{t.advisor.selectAny}</p>
+              <div className="flex flex-wrap gap-2">{others.map(chip)}</div>
+            </>
+          ) : null}
+          {suggested.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAll((v) => !v)}
+              className="self-start text-sm text-neutral-600 underline dark:text-neutral-300"
+            >
+              {showAll ? t.advisor.showFewer : t.advisor.seeAll}
+            </button>
+          )}
           <button
             type="button"
             disabled={disabled}
@@ -79,6 +135,7 @@ export function QuestionForm({
           </button>
         </div>
       );
+    }
     case "number":
     case "text": {
       const isNumber = question.kind === "number";

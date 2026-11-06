@@ -3,20 +3,26 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { HelpPanel } from "@/components/advisor/HelpPanel";
 import { QuestionForm } from "@/components/advisor/QuestionForm";
 import { RecommendationCard } from "@/components/advisor/RecommendationCard";
 import { VoiceButton } from "@/components/advisor/VoiceButton";
+import { JourneySteps } from "@/components/JourneySteps";
 import {
   type AssistantMessage,
   type Question,
+  REFINE_SLOTS,
   type Recommendation,
   type TurnResponse,
   createQuote,
+  refinePlan,
+  resumeSession,
   sendAnswer,
   sendText,
+  sendUnsure,
   startSession,
 } from "@/lib/api";
-import { type Locale, type Messages, bcp47 } from "@/lib/i18n";
+import { type Locale, type Messages, bcp47, fill } from "@/lib/i18n";
 
 type Entry = AssistantMessage | { role: "user"; kind: "text"; text: string };
 
@@ -26,6 +32,9 @@ interface Snapshot {
   entries: AssistantMessage[]; // assistant turns only: the owner's own words are never stored
   question: Question | null;
   recommendation: Recommendation | null;
+  progress?: TurnResponse["progress"];
+  assumed?: string[];
+  canRefine?: boolean;
 }
 
 const storageKey = (locale: Locale) => `udyam.advisor.${locale}`;
@@ -36,6 +45,9 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [question, setQuestion] = useState<Question | null>(null);
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
+  const [progress, setProgress] = useState<TurnResponse["progress"]>(null);
+  const [assumed, setAssumed] = useState<string[]>([]);
+  const [canRefine, setCanRefine] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
@@ -61,6 +73,9 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
       setMode(res.mode);
       setQuestion(res.question);
       setRecommendation(res.recommendation);
+      setProgress(res.progress ?? null);
+      setAssumed(res.assumed ?? []);
+      setCanRefine(Boolean(res.can_refine));
       setEntries((prev) => {
         const next: Entry[] = [...prev];
         if (userText) next.push({ role: "user", kind: "text", text: userText });
@@ -71,6 +86,9 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
           entries: next.filter((e): e is AssistantMessage => e.role === "assistant"),
           question: res.question,
           recommendation: res.recommendation,
+          progress: res.progress ?? null,
+          assumed: res.assumed ?? [],
+          canRefine: Boolean(res.can_refine),
         };
         sessionStorage.setItem(storageKey(locale), JSON.stringify(snapshot));
         return next;
@@ -102,6 +120,15 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
   );
 
   useEffect(() => {
+    // A resume link (`?s=<session>`, texted to the owner) picks up where they left off.
+    const resume = new URLSearchParams(window.location.search).get("s");
+    if (resume) {
+      sessionStorage.removeItem(storageKey(locale));
+      window.history.replaceState(null, "", window.location.pathname);
+      setEntries([]);
+      void run(() => resumeSession(resume));
+      return;
+    }
     const saved = sessionStorage.getItem(storageKey(locale));
     if (saved) {
       const snap = JSON.parse(saved) as Snapshot;
@@ -110,10 +137,13 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
       setEntries(snap.entries);
       setQuestion(snap.question);
       setRecommendation(snap.recommendation);
+      setProgress(snap.progress ?? null);
+      setAssumed(snap.assumed ?? []);
+      setCanRefine(Boolean(snap.canRefine));
       return;
     }
     start("chat");
-  }, [locale, start]);
+  }, [locale, start, run]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
@@ -132,8 +162,23 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
     void run(() => sendAnswer(sessionId, slot, value), label);
   };
 
+  const unsure = (slot: string, label: string) => {
+    if (!sessionId || busy) return;
+    void run(() => sendUnsure(sessionId, slot), label);
+  };
+
+  const refine = () => {
+    if (!sessionId || busy) return;
+    void run(() => refinePlan(sessionId));
+  };
+
+  const isRefineSlot = question ? (REFINE_SLOTS as readonly string[]).includes(question.slot) : false;
+  const assumedLabel = (slot: string) =>
+    (t.advisor.assumed as Record<string, string>)[slot] ?? slot;
+
   return (
     <section className="flex flex-col gap-4" aria-live="polite">
+      <JourneySteps t={t} current={1} />
       <ol className="flex flex-col gap-2" data-testid="transcript">
         {entries.map((entry, i) => (
           <li
@@ -163,6 +208,31 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
       {recommendation && (
         <>
           <RecommendationCard recommendation={recommendation} locale={locale} t={t} />
+          {assumed.length > 0 && (
+            <section
+              data-testid="assumed"
+              className="flex flex-col gap-2 rounded-xl bg-neutral-50 p-3 text-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-700"
+            >
+              <p className="font-medium">{t.advisor.assumedTitle}</p>
+              <ul className="list-disc ps-5 text-neutral-700 dark:text-neutral-300">
+                {assumed.map((slot) => (
+                  <li key={slot}>{assumedLabel(slot)}</li>
+                ))}
+              </ul>
+              {canRefine && (
+                <button
+                  type="button"
+                  data-testid="refine"
+                  onClick={refine}
+                  disabled={busy}
+                  className="flex flex-col items-start self-start text-left disabled:opacity-50"
+                >
+                  <span className="font-medium text-red-700 underline">{t.advisor.refine}</span>
+                  <span className="text-xs text-neutral-500">{t.advisor.refineHint}</span>
+                </button>
+              )}
+            </section>
+          )}
           <button
             type="button"
             onClick={() => void customise()}
@@ -176,8 +246,20 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
 
       {question && !recommendation && (
         <>
+          {progress && (
+            <p data-testid="progress" className="text-xs font-medium text-neutral-500">
+              {fill(t.advisor.progress, progress)}
+            </p>
+          )}
           {mode === "form" ? (
-            <QuestionForm key={question.slot} question={question} t={t} disabled={busy} onAnswer={answer} />
+            <QuestionForm
+              key={question.slot}
+              question={question}
+              t={t}
+              disabled={busy}
+              onAnswer={answer}
+              onUnsure={unsure}
+            />
           ) : (
             <>
               <form onSubmit={submitText} className="flex items-end gap-2">
@@ -203,11 +285,24 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
                   {t.advisor.send}
                 </button>
               </form>
+              {isRefineSlot && (
+                <button
+                  type="button"
+                  data-testid="not-sure"
+                  disabled={busy}
+                  onClick={() => unsure(question.slot, t.advisor.notSure)}
+                  className="self-start text-sm text-red-700 underline disabled:opacity-50"
+                >
+                  {t.advisor.notSure}
+                </button>
+              )}
               <QuestionShortcut question={question} t={t} disabled={busy} onAnswer={answer} />
             </>
           )}
         </>
       )}
+
+      {sessionId && <HelpPanel key={sessionId} sessionId={sessionId} t={t} />}
 
       <button
         type="button"

@@ -17,7 +17,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Final
 
-from app.advisor.slots import CurrentSetup, SlotName, validate_slot
+from app.advisor.planner import suggested_needs
+from app.advisor.slots import CurrentSetup, SlotName, Slots, validate_slot
 from app.domain.catalogue import Segment
 from app.domain.cities import CityDirectory
 from app.domain.profile import MAX_EMPLOYEES, MAX_SITES, Need
@@ -54,8 +55,14 @@ FORM: Final[dict[SlotName, FormSpec]] = {
 MAX_TEXT_CHARS: Final = 40  # matches the ``city`` slot bound
 
 
-def question_payload(slot: SlotName, cities: CityDirectory) -> dict[str, Any]:
-    """The structured question the UI renders for ``slot``."""
+def question_payload(
+    slot: SlotName, cities: CityDirectory, slots: Slots | None = None
+) -> dict[str, Any]:
+    """The structured question the UI renders for ``slot``.
+
+    For ``needs``, ``suggested`` lists what businesses of this kind usually add; the UI
+    shows those first, pre-ticked, with the rest behind "see all".
+    """
     spec = FORM[slot]
     payload: dict[str, Any] = {
         "slot": slot.value,
@@ -66,6 +73,8 @@ def question_payload(slot: SlotName, cities: CityDirectory) -> dict[str, Any]:
     }
     if slot is SlotName.CITY:
         payload["suggestions"] = list(cities.names)
+    if slot is SlotName.NEEDS:
+        payload["suggested"] = suggested_needs(slots) if slots is not None else []
     return payload
 
 

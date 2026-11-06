@@ -318,3 +318,48 @@ def test_k04_blurry_then_manual_entry_goes_to_human_review(ocr_client: TestClien
     with ocr_client.app.state.sessionmaker() as db:  # type: ignore[attr-defined]
         items = db.scalars(select(KycReviewItem).where(KycReviewItem.status == ReviewStatus.OPEN))
         assert [i.reasons for i in items] == [["GSTIN_MANUAL_ENTRY"]]
+
+
+# ------------------------------------------------------------------ fewer uploads, visit
+
+
+@requires_tesseract
+def test_gstin_verified_online_instead_of_a_certificate_photo(ocr_client: TestClient) -> None:
+    """The registry record stands in for the certificate; ID and bill are still checked."""
+    headers = login(ocr_client)
+    app_id = create(ocr_client, headers, "K03")
+    upload_specimen(ocr_client, headers, app_id, "K03", skip=(DocSlot.GST_CERTIFICATE,))
+    r = ocr_client.post(f"{BASE}/{app_id}/gst/lookup", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["on_record"] == {"gstin": True, "udyam": True}
+    gst = next(d for d in r.json()["documents"] if d["slot"] == "GST_CERTIFICATE")
+    assert gst["source"] == "LOOKUP"
+    body = submit(ocr_client, headers, app_id)
+    assert body["status"] == "PASS", body["verdict"]
+    reasons = {c["reason"] for c in body["verdict"]["checks"]}
+    assert "GSTIN_VERIFIED_BY_LOOKUP" in reasons
+    checks = {c["check_id"] for c in body["verdict"]["checks"]}
+    assert "signatory.authorised" in checks  # the ID is still matched to the business
+
+
+def test_gstin_lookup_needs_a_gstin_on_record(ocr_client: TestClient) -> None:
+    headers = login(ocr_client)
+    app_id = create(ocr_client, headers)
+    r = ocr_client.post(f"{BASE}/{app_id}/gst/lookup", headers=headers)
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "NOTHING_ON_RECORD"
+
+
+def test_owner_can_ask_for_a_visit_instead_of_uploading(ocr_client: TestClient) -> None:
+    headers = login(ocr_client)
+    app_id = create(ocr_client, headers)
+    r = ocr_client.post(f"{BASE}/{app_id}/visit", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["handed_off"] is True
+    ocr_client.post(f"{BASE}/{app_id}/visit", headers=headers)  # idempotent
+    app: Any = ocr_client.app
+    with app.state.sessionmaker() as db:
+        items = db.query(KycReviewItem).filter_by(application_id=app_id).all()
+    assert [(i.kind, i.reasons) for i in items] == [(ReviewKind.HANDOFF, ["VISIT_REQUESTED"])]
+    other = login(ocr_client)  # a different person
+    assert ocr_client.post(f"{BASE}/{app_id}/visit", headers=other).status_code == 404

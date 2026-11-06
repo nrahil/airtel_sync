@@ -36,6 +36,7 @@ const en = {
     order: "Order: {state}",
     atQuestion: "Stopped at question: {slot}",
     reasons: {
+      CALLBACK_REQUESTED: "Asked us to call them — call first",
       ABANDONED_MIDWAY: "Left mid-conversation",
       TURN_LIMIT: "Hit the turn limit",
       LLM_UNAVAILABLE: "Assistant was unavailable",
@@ -51,7 +52,7 @@ const en = {
     } as Record<string, string>,
   },
   review: {
-    kinds: { REVIEW: "Needs a decision", HANDOFF: "Hand-off after 3 failed tries" },
+    kinds: { REVIEW: "Needs a decision", HANDOFF: "Hand-off to a partner (visit asked for, or 3 failed tries)" },
     attempts: "Failed attempts: {n}",
     note: "Note (required)",
     approve: "Approve",
@@ -116,6 +117,7 @@ const hi = {
     order: "ऑर्डर: {state}",
     atQuestion: "इस सवाल पर रुके: {slot}",
     reasons: {
+      CALLBACK_REQUESTED: "कॉल करने को कहा — पहले कॉल करें",
       ABANDONED_MIDWAY: "बातचीत बीच में छोड़ी",
       TURN_LIMIT: "सवालों की सीमा पूरी",
       LLM_UNAVAILABLE: "सहायक उपलब्ध नहीं था",
@@ -131,7 +133,7 @@ const hi = {
     } as Record<string, string>,
   },
   review: {
-    kinds: { REVIEW: "फ़ैसला चाहिए", HANDOFF: "3 बार विफल — हैंड-ऑफ़" },
+    kinds: { REVIEW: "फ़ैसला चाहिए", HANDOFF: "पार्टनर को हैंड-ऑफ़ (विज़िट माँगी या 3 बार विफल)" },
     attempts: "विफल प्रयास: {n}",
     note: "नोट (ज़रूरी)",
     approve: "मंज़ूर",

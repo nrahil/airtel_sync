@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, guarded
 from app.api.v1.quotes import checkout_services
 from app.config import Clock, get_clock
-from app.db.models import ConsentPurpose, KycApplication
+from app.db.models import ConsentPurpose, KycApplication, Order
 from app.kyc.messages import fix_message
 from app.kyc.service import KycService, ManualEntryNotAllowedError, NothingOnRecordError
 from app.kyc.types import ApplicationContext, Check, CheckStatus, DocSlot
@@ -52,6 +52,8 @@ class CreateApplication(BaseModel):
     contact_name: Annotated[str | None, Field(max_length=120)] = None
     gstin: Annotated[str | None, Field(max_length=20)] = None
     udyam_number: Annotated[str | None, Field(max_length=25)] = None
+    # The order this KYC is for; its documents are then checked only for that order.
+    order_id: Annotated[str | None, Field(max_length=36)] = None
 
 
 class ManualEntry(BaseModel):
@@ -72,7 +74,7 @@ def _owned(db: Session, principal: str, application_id: str) -> KycApplication:
     return app
 
 
-def _summary(app: KycApplication) -> dict[str, Any]:
+def _summary(app: KycApplication, service: KycService) -> dict[str, Any]:
     return {
         "application_id": app.id,
         "status": app.status.value,
@@ -80,6 +82,8 @@ def _summary(app: KycApplication) -> dict[str, Any]:
         "handed_off": app.handed_off,
         "documents": KycService.documents_summary(app),
         "verdict": app.last_verdict,
+        # Which numbers the owner gave (booleans only): the UI offers "verify online".
+        "on_record": service.on_record(app),
     }
 
 
@@ -107,13 +111,19 @@ def create_application(
         gstin_on_record=(body.gstin or "").upper() or None,
         udyam_on_record=(body.udyam_number or "").upper() or None,
     )
-    app = _service(request).create(db, principal, ctx)
-    return _summary(app)
+    if body.order_id is not None:
+        order = db.get(Order, body.order_id)
+        if order is None or order.principal_token != principal:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, {"code": "NOT_FOUND"})
+    app = _service(request).create(db, principal, ctx, order_id=body.order_id)
+    return _summary(app, _service(request))
 
 
 @router.get("/applications/{application_id}")
-def get_application(application_id: str, db: Db, principal: KycPrincipal) -> dict[str, Any]:
-    return _summary(_owned(db, principal, application_id))
+def get_application(
+    application_id: str, request: Request, db: Db, principal: KycPrincipal
+) -> dict[str, Any]:
+    return _summary(_owned(db, principal, application_id), _service(request))
 
 
 @router.post(
@@ -171,7 +181,32 @@ def manual_entry(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, {"code": "MANUAL_ENTRY_NOT_ALLOWED"}
         ) from None
-    return _summary(app)
+    return _summary(app, _service(request))
+
+
+@router.post("/applications/{application_id}/gst/lookup")
+def verify_gstin_on_record(
+    application_id: str, request: Request, db: Db, principal: KycPrincipal
+) -> dict[str, Any]:
+    """Verify the GSTIN given on record in the registry instead of uploading a certificate."""
+    app = _owned(db, principal, application_id)
+    try:
+        _service(request).verify_gstin_on_record(db, app)
+    except NothingOnRecordError:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, {"code": "NOTHING_ON_RECORD"}
+        ) from None
+    return _summary(app, _service(request))
+
+
+@router.post("/applications/{application_id}/visit")
+def request_visit(
+    application_id: str, request: Request, db: Db, principal: KycPrincipal
+) -> dict[str, Any]:
+    """Ask for a partner / field visit to collect the documents instead of uploading."""
+    app = _owned(db, principal, application_id)
+    _service(request).request_visit(db, app)
+    return _summary(app, _service(request))
 
 
 @router.post("/applications/{application_id}/udyam/lookup")
@@ -185,7 +220,7 @@ def verify_udyam_on_record(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, {"code": "NOTHING_ON_RECORD"}
         ) from None
-    return _summary(app)
+    return _summary(app, _service(request))
 
 
 @router.post("/applications/{application_id}/submit")
@@ -201,4 +236,4 @@ async def submit(
     await _service(request).submit(db, app, locale)
     # Orders waiting on KYC move with the verdict (and the owner gets an update).
     checkout_services(request).tracker.sync_principal(db, clock, principal)
-    return _summary(app)
+    return _summary(app, _service(request))

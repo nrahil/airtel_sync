@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from app.advisor import messages as msg
+from app.advisor.groq_client import LlmBadOutputError
 from app.advisor.service import AdvisorService, Mode, Reply, State
 from app.advisor.slots import SlotName
 from app.domain.reasons import ReasonCode
@@ -29,6 +30,15 @@ PROF: dict[str, Any] = {
     "current_internet": "home_broadband",
     "needs": [],
 }
+
+
+async def walk(service: AdvisorService, reply: Reply, answers: list[tuple[SlotName, Any]]) -> Reply:
+    """Answer each question in turn, checking it is the one being asked."""
+    for slot, value in answers:
+        assert reply.question is not None
+        assert reply.question["slot"] == slot.value
+        reply = await service.answer(reply.state, slot, value)
+    return reply
 
 
 async def complete_profile(service: AdvisorService, text: str = "dental clinic in Mumbai") -> Reply:
@@ -131,6 +141,21 @@ async def test_ll_03_non_json_slots_are_discarded_and_reasked(make_advisor: Make
     assert reply.state.mode is Mode.CHAT
 
 
+async def test_model_bad_json_is_reasked_and_stays_in_chat(make_advisor: MakeAdvisor) -> None:
+    """Groq's ``json_validate_failed`` is a bad answer, not an outage: no switch to the form."""
+
+    def bad(_kind: str, _payload: dict[str, Any]) -> str:
+        raise LlmBadOutputError("invalid JSON from model")
+
+    service, _ = make_advisor(FakeLlm(bad))
+    start = await service.start("en", Mode.CHAT)
+    reply = await service.chat(start.state, "recommend me something")
+    assert reply.state.mode is Mode.CHAT
+    assert reply.stall_reason is None
+    assert reply.question is not None
+    assert reply.question["slot"] == "segment"
+
+
 # ------------------------------------------------------------------ LL-04 / LL-05 injection
 
 
@@ -205,21 +230,17 @@ async def test_ll_07_groq_down_falls_back_to_form_and_completes(make_advisor: Ma
     reply = await service.chat(start.state, "I have a dental clinic in Mumbai with 8 staff")
     assert reply.state.mode is Mode.FORM
     assert reply.stall_reason == "LLM_UNAVAILABLE"
-    answers: list[tuple[SlotName, Any]] = [
-        (SlotName.SEGMENT, "prof"),
-        (SlotName.CITY, "mumbai"),
-        (SlotName.EMPLOYEE_COUNT, 8),
-        (SlotName.NUM_SITES, 1),
-        (SlotName.HAS_GSTIN, True),
-        (SlotName.CURRENT_INTERNET, "home_broadband"),
-        (SlotName.NEEDS, ["wifi"]),
-    ]
-    state = reply.state
-    for slot, value in answers:
-        assert reply.question is not None
-        assert reply.question["slot"] == slot.value
-        reply = await service.answer(state, slot, value)
-        state = reply.state
+    reply = await walk(
+        service,
+        reply,
+        [(SlotName.SEGMENT, "prof"), (SlotName.CITY, "mumbai"), (SlotName.EMPLOYEE_COUNT, 8)],
+    )
+    assert reply.recommendation is not None  # plan first
+    reply = await walk(
+        service,
+        await service.refine(reply.state),
+        [(SlotName.NUM_SITES, 1), (SlotName.HAS_GSTIN, True), (SlotName.NEEDS, ["wifi"])],
+    )
     assert reply.recommendation is not None
     assert explanation(reply)["source"] == "template"
     assert reply.state.slots.city == "Mumbai"
@@ -406,15 +427,17 @@ async def test_same_answers_same_recommendation(make_advisor: MakeAdvisor) -> No
 
 # ------------------------------------------------------------------ LL-07 + LL-10 offline
 
-FORM_ANSWERS: tuple[tuple[SlotName, Any], ...] = (
+ESSENTIAL_ANSWERS: tuple[tuple[SlotName, Any], ...] = (
     (SlotName.SEGMENT, "prof"),
     (SlotName.CITY, "Mumbai"),
     (SlotName.EMPLOYEE_COUNT, 8),
+)
+REFINE_ANSWERS: tuple[tuple[SlotName, Any], ...] = (
     (SlotName.NUM_SITES, 1),
     (SlotName.HAS_GSTIN, False),
-    (SlotName.CURRENT_INTERNET, "none"),
     (SlotName.NEEDS, []),
 )
+FORM_ANSWERS = (*ESSENTIAL_ANSWERS, *REFINE_ANSWERS, (SlotName.CURRENT_INTERNET, "none"))
 
 
 @pytest.mark.parametrize("locale", msg.SUPPORTED_LOCALES)
@@ -423,16 +446,20 @@ async def test_offline_journey_speaks_the_owners_language(
 ) -> None:
     service, llm = make_advisor(FakeLlm(down=True))
     reply = await service.start(locale, Mode.FORM)
-    state = reply.state
     seen = [m["text"] for m in reply.messages]
-    for slot, value in FORM_ANSWERS:
-        assert reply.question is not None
-        assert reply.question["slot"] == slot.value
-        assert reply.messages[-1]["text"] == msg.question(slot, locale)
-        reply = await service.answer(state, slot, value)
-        state = reply.state
-        seen += [m["text"] for m in reply.messages]
+    for phase in (ESSENTIAL_ANSWERS, REFINE_ANSWERS):
+        if phase is REFINE_ANSWERS:
+            reply = await service.refine(reply.state)
+            seen += [m["text"] for m in reply.messages]
+        for slot, value in phase:
+            assert reply.question is not None
+            assert reply.question["slot"] == slot.value
+            assert reply.messages[-1]["text"] == msg.question(slot, locale)
+            reply = await service.answer(reply.state, slot, value)
+            seen += [m["text"] for m in reply.messages]
+        assert reply.recommendation is not None
     assert llm.calls == []
+    assert msg.notice("REFINE", locale) in seen
     assert reply.recommendation is not None
     text = explanation(reply)["text"]
     assert explanation(reply)["source"] == "template"
@@ -462,3 +489,175 @@ async def test_groq_outage_mid_chat_continues_in_tamil(make_advisor: MakeAdvisor
     assert reply.state.mode is Mode.FORM
     assert reply.messages[0]["text"] == msg.notice("LLM_UNAVAILABLE", "ta")
     assert reply.messages[-1]["text"] == msg.question(SlotName.SEGMENT, "ta")
+
+
+# ------------------------------------------------------------------ plan first, "not sure"
+
+
+async def test_plan_after_three_answers_with_assumptions(make_advisor: MakeAdvisor) -> None:
+    service, _ = make_advisor(FakeLlm(down=True))
+    reply = await service.start("en", Mode.FORM)
+    reply = await walk(service, reply, list(ESSENTIAL_ANSWERS))
+    assert reply.recommendation is not None
+    assert reply.state.slots.num_sites is None  # assumed one site, not invented
+    assert reply.state.slots.has_gstin is None
+
+
+async def test_several_branches_makes_the_branch_count_essential(
+    make_advisor: MakeAdvisor,
+) -> None:
+    service, _ = make_advisor(FakeLlm(down=True))
+    reply = await service.start("en", Mode.FORM)
+    reply = await walk(
+        service,
+        reply,
+        [
+            (SlotName.SEGMENT, "multi"),
+            (SlotName.CITY, "Mumbai"),
+            (SlotName.EMPLOYEE_COUNT, 20),
+            (SlotName.NUM_SITES, 3),
+        ],
+    )
+    assert reply.recommendation is not None
+
+
+@pytest.mark.parametrize("text", ["recommend me, which will be suitable", "not sure", "पता नहीं"])
+async def test_unsure_about_needs_in_chat_picks_the_suggested_extras(
+    make_advisor: MakeAdvisor, text: str
+) -> None:
+    service, _ = make_advisor(FakeLlm(slots_script({})))
+    reply = await service.start("en", Mode.FORM)
+    reply = await walk(service, reply, list(ESSENTIAL_ANSWERS))
+    reply = await service.refine(reply.state)
+    reply.state.mode = Mode.CHAT
+    reply = await service.answer(reply.state, SlotName.NUM_SITES, 1)
+    reply = await service.answer(reply.state, SlotName.HAS_GSTIN, True)
+    assert reply.question is not None
+    assert reply.question["slot"] == "needs"
+    assert reply.question["suggested"] == ["wifi", "website", "failover"]
+    reply = await service.chat(reply.state, text)
+    assert reply.recommendation is not None
+    assert reply.state.slots.needs == ("wifi", "website", "failover")
+    assert any("No problem" in m["text"] or "कोई बात नहीं" in m["text"] for m in reply.messages)
+
+
+async def test_unsure_about_an_essential_is_reasked_gently(make_advisor: MakeAdvisor) -> None:
+    service, _ = make_advisor(FakeLlm(slots_script({})))
+    start = await service.start("en", Mode.CHAT)
+    reply = await service.chat(start.state, "I don't know, you decide")
+    assert reply.question is not None
+    assert reply.question["slot"] == "segment"
+    assert msg.notice("UNSURE_ROUGH", "en") in [m["text"] for m in reply.messages]
+    assert reply.state.mode is Mode.CHAT
+
+
+async def test_model_flags_unsure(make_advisor: MakeAdvisor) -> None:
+    service, _ = make_advisor(FakeLlm(slots_script({"unsure": True})))
+    reply = await service.start("en", Mode.FORM)
+    reply = await walk(service, reply, list(ESSENTIAL_ANSWERS))
+    reply = await service.refine(reply.state)
+    reply.state.mode = Mode.CHAT
+    reply = await service.chat(reply.state, "hmm, branches? one I think, maybe more")
+    assert reply.state.slots.num_sites is None
+    assert reply.question is not None
+    assert reply.question["slot"] == "has_gstin"
+
+
+@pytest.mark.parametrize("slot", [SlotName.NUM_SITES, SlotName.HAS_GSTIN, SlotName.NEEDS])
+async def test_pick_for_me_button_on_every_fine_tune_question(
+    make_advisor: MakeAdvisor, slot: SlotName
+) -> None:
+    service, _ = make_advisor(FakeLlm(down=True))
+    reply = await service.start("en", Mode.FORM)
+    reply = await walk(service, reply, list(ESSENTIAL_ANSWERS))
+    reply = await service.refine(reply.state)
+    while reply.question is not None and reply.question["slot"] != slot.value:
+        reply = await service.answer(
+            reply.state, SlotName(reply.question["slot"]), None, unsure=True
+        )
+    reply = await service.answer(reply.state, slot, None, unsure=True)
+    assert slot.value in reply.state.asked
+    assert msg.notice("UNSURE_PICKED", "en") in [m["text"] for m in reply.messages]
+
+
+@pytest.mark.parametrize("segment", ["micro", "prof", "multi", "mfg"])
+async def test_suggested_extras_are_never_blocked(make_advisor: MakeAdvisor, segment: str) -> None:
+    from app.domain.profile import Need
+    from app.domain.recommender import NEED_CANDIDATES
+
+    service, _ = make_advisor(FakeLlm(down=True))
+    reply = await service.start("en", Mode.FORM)
+    answers = [
+        (SlotName.SEGMENT, segment),
+        (SlotName.CITY, "Mumbai"),
+        (SlotName.EMPLOYEE_COUNT, 12),
+    ]
+    if segment == "multi":
+        answers.append((SlotName.NUM_SITES, 2))
+    reply = await walk(service, reply, answers)
+    reply = await service.refine(reply.state)
+    while reply.question is not None and reply.question["slot"] != "needs":
+        reply = await service.answer(
+            reply.state, SlotName(reply.question["slot"]), None, unsure=True
+        )
+    assert reply.question is not None
+    suggested = reply.question["suggested"]
+    assert suggested
+    reply = await service.answer(reply.state, SlotName.NEEDS, suggested)
+    assert reply.recommendation is not None
+    in_plan = {line["product_id"] for line in reply.recommendation["pricing"]["lines"]}
+    in_plan |= {a["product_id"] for a in reply.recommendation["addons"]}
+    for need in suggested:
+        assert in_plan & set(NEED_CANDIDATES[Need(need)]), need
+
+
+async def test_resume_shows_the_current_question(make_advisor: MakeAdvisor) -> None:
+    service, _llm = make_advisor(FakeLlm(down=True))
+    reply = await service.start("hi", Mode.FORM)
+    reply = await service.answer(reply.state, SlotName.SEGMENT, "prof")
+    state = State.from_json(reply.state.to_json())
+    resumed = await service.resume(state)
+    assert resumed.messages[0]["text"] == msg.notice("WELCOME_BACK", "hi")
+    assert resumed.question is not None
+    assert resumed.question["slot"] == "city"
+
+
+async def test_empty_needs_with_recommend_me_counts_as_unsure(make_advisor: MakeAdvisor) -> None:
+    """Seen live: the model answers ``"needs": []`` to "recommend me, which will be suitable"."""
+    service, _ = make_advisor(FakeLlm(slots_script({"needs": []})))
+    reply = await service.start("en", Mode.FORM)
+    reply = await walk(service, reply, list(ESSENTIAL_ANSWERS))
+    reply = await service.refine(reply.state)
+    reply = await service.answer(reply.state, SlotName.NUM_SITES, 1)
+    reply = await service.answer(reply.state, SlotName.HAS_GSTIN, True)
+    reply.state.mode = Mode.CHAT
+    reply = await service.chat(reply.state, "recommend me, which will be suitable for my clinic")
+    assert reply.state.slots.needs == ("wifi", "website", "failover")
+
+
+async def test_a_plain_no_still_means_no_extras(make_advisor: MakeAdvisor) -> None:
+    service, _ = make_advisor(FakeLlm(slots_script({"needs": []})))
+    reply = await service.start("en", Mode.FORM)
+    reply = await walk(service, reply, list(ESSENTIAL_ANSWERS))
+    reply = await service.refine(reply.state)
+    reply = await service.answer(reply.state, SlotName.NUM_SITES, 1)
+    reply = await service.answer(reply.state, SlotName.HAS_GSTIN, True)
+    reply.state.mode = Mode.CHAT
+    reply = await service.chat(reply.state, "no, nothing else")
+    assert reply.state.slots.needs == ()
+
+
+async def test_stated_extras_come_back_as_named_addons(make_advisor: MakeAdvisor) -> None:
+    service, _ = make_advisor(FakeLlm(down=True))
+    reply = await service.start("en", Mode.FORM)
+    reply = await walk(service, reply, list(ESSENTIAL_ANSWERS))
+    reply = await service.refine(reply.state)
+    for _ in range(3):
+        assert reply.question is not None
+        reply = await service.answer(
+            reply.state, SlotName(reply.question["slot"]), None, unsure=True
+        )
+    assert reply.recommendation is not None
+    addons = {a["product_id"]: a for a in reply.recommendation["addons"]}
+    assert {"P22", "P18", "P09"} <= set(addons)  # Wi-Fi, website, backup internet
+    assert all(a["product_name"] for a in addons.values())

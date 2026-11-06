@@ -9,7 +9,13 @@ from typing import Any
 import httpx
 import pytest
 
-from app.advisor.groq_client import DisabledLlm, GroqClient, LlmUnavailableError, llm_from
+from app.advisor.groq_client import (
+    DisabledLlm,
+    GroqClient,
+    LlmBadOutputError,
+    LlmUnavailableError,
+    llm_from,
+)
 from app.advisor.messages import detect_locale, has_unsupported_script
 from app.advisor.redactor import redact
 from app.advisor.verifier import FactBlocked, FactLine, Facts, inr, verify_explanation
@@ -94,6 +100,38 @@ async def test_ll_07_gives_up_after_one_retry() -> None:
     with pytest.raises(LlmUnavailableError, match="ReadTimeout"):
         await client(handler).complete([], json_mode=True)
     assert calls == 2
+
+
+BAD_JSON = {
+    "error": {
+        "message": "Failed to generate JSON.",
+        "type": "invalid_request_error",
+        "code": "json_validate_failed",
+        "failed_generation": '{"}}',
+    }
+}
+
+
+async def test_invalid_json_from_the_model_is_retried_once() -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return (
+            httpx.Response(400, json=BAD_JSON) if calls == 1 else httpx.Response(200, json=OK_BODY)
+        )
+
+    assert await client(handler).complete([], json_mode=True) == '{"a": 1}'
+    assert calls == 2
+
+
+async def test_invalid_json_twice_is_bad_output_not_an_outage() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json=BAD_JSON)
+
+    with pytest.raises(LlmBadOutputError, match="invalid JSON"):
+        await client(handler).complete([], json_mode=True)
 
 
 async def test_client_errors_are_not_retried() -> None:

@@ -85,6 +85,9 @@ def templates() -> dict[str, dict[str, object]]:
         for key, text in states.items():
             if not isinstance(text, str) or not text.strip() or _PLACEHOLDER.search(text):
                 raise TemplateError(f"{locale}.states.{key}: empty or has placeholders")
+        resume = data.get("resume")
+        if not isinstance(resume, str) or set(_PLACEHOLDER.findall(resume)) != {"link"}:
+            raise TemplateError(f"{locale}.resume: needs exactly the {{link}} placeholder")
         out[locale] = data
     return out
 
@@ -204,6 +207,24 @@ class OrderNotifier:
         )
         db.add(row)
         return row
+
+    def resume_link(self, locale: str, session_id: str) -> str:
+        return f"{self.app_url}/{locale}/advisor?s={session_id}"
+
+    def send_resume_link(self, db: Session, principal: str, locale: str, session_id: str) -> bool:
+        """Text the owner a link back to their advisor session (WhatsApp, then SMS).
+
+        Nothing is stored about the message; the session holds no personal data.
+        """
+        phone = self.contact(db, principal)
+        if phone is None:
+            return False
+        data = templates().get(locale) or templates()["en"]
+        text = str(data["resume"]).format(link=self.resume_link(locale, session_id))
+        return any(
+            self.transport.send(channel, phone, text)
+            for channel in (NotificationChannel.WHATSAPP, NotificationChannel.SMS)
+        )
 
     def sla_alert(self, db: Session, order: Order) -> OrderNotification:
         self.transport.alert_ops(order.id, "SLA_BREACH")

@@ -123,7 +123,9 @@ test("E2E-01 (UI): K03 documents upload, pass, and lead to payment", async ({ pa
   await expect(verdict).toContainText("All documents verified");
   await expect(page.getByTestId("kyc-to-payment")).toHaveAttribute("href", "/en/checkout?q=q-1");
 
-  expect(seen.created).toEqual([{ contact_name: "Joseph Singh", gstin: "27xuixg0767d1zp", udyam_number: "UDYAM-MH-00-9516696" }]);
+  expect(seen.created).toEqual([
+    { contact_name: "Joseph Singh", gstin: "27xuixg0767d1zp", udyam_number: "UDYAM-MH-00-9516696", order_id: ORDER_ID },
+  ]);
   expect(seen.uploads.map((u) => u.slot)).toEqual(Object.keys(FILES));
   // Raw bytes, no multipart, no file name (UP-06).
   expect(seen.uploads.every((u) => u.type === "application/octet-stream" && u.bytes > 10_000 && u.locale === "en")).toBe(true);
@@ -131,6 +133,20 @@ test("E2E-01 (UI): K03 documents upload, pass, and lead to payment", async ({ pa
   const stored = await page.evaluate(() => JSON.stringify(sessionStorage));
   expect(stored).not.toContain("Joseph");
   expect(stored).not.toContain("27XUIXG0767D1ZP");
+});
+
+test("a new order starts its own KYC, not the one remembered from an earlier order", async ({ page }) => {
+  const seen = await mockKyc(page, {
+    verdict: { status: "PASS", verdict: { decision: "PASS", review_required: false, lookup_offered: false, handed_off: false, checks: [], fixes: [] } },
+  });
+  // An earlier order's application, still remembered in this tab.
+  await page.addInitScript((id) => sessionStorage.setItem("udyam.kyc.application", id), APP_ID);
+  await page.goto(`/en/kyc?o=${ORDER_ID}`);
+  await expect(page.getByTestId("kyc-on-record")).toBeVisible();
+  await expect(page.getByTestId("kyc-slots")).toHaveCount(0);
+  await declare(page, "Asha Rao", "29ABCDE1234F1Z5", "");
+  await expect(page.getByTestId("kyc-slots")).toBeVisible();
+  expect(seen.created).toEqual([{ contact_name: "Asha Rao", gstin: "29ABCDE1234F1Z5", order_id: ORDER_ID }]);
 });
 
 test("E2E-02 (UI): K11 stale bill shows the exact fix on the address-proof slot", async ({ page }) => {
@@ -234,4 +250,53 @@ test("checkout links an order waiting on KYC to the document screen", async ({ p
   });
   await page.goto("/en/checkout?q=q-1");
   await expect(page.getByTestId("kyc-link")).toHaveAttribute("href", `/en/kyc?o=${ORDER_ID}`);
+});
+
+test("fewer uploads: verify the GSTIN online, preview it, or ask for a visit instead", async ({ page }) => {
+  const calls: string[] = [];
+  let gstLooked = false;
+  let visited = false;
+  const app = () => ({
+    ...application("DRAFT", []),
+    documents: gstLooked ? [{ slot: "GST_CERTIFICATE", source: "LOOKUP", uploaded_at: "2026-07-15T10:00:00+05:30" }] : [],
+    handed_off: visited,
+    on_record: { gstin: true, udyam: false },
+  });
+  await page.addInitScript(() => sessionStorage.setItem("udyam.token", "v1.p_test.123.sig"));
+  await page.route("**/api/v1/**", async (route) => {
+    const p = new URL(route.request().url()).pathname;
+    calls.push(`${route.request().method()} ${p}`);
+    if (p.endsWith(`/orders/${ORDER_ID}`)) return route.fulfill({ json: order(null, "KYC") });
+    if (p.includes("/lookup/gstin/")) {
+      return route.fulfill({
+        json: { outcome: "FOUND", gstin: "29ABC*********5", status: "ACTIVE", legal_name: "A*** R** T*****", trade_name: "A*** D*****", state: "Karnataka" },
+      });
+    }
+    if (p.endsWith("/kyc/applications")) return route.fulfill({ status: 201, json: app() });
+    if (p.endsWith("/gst/lookup")) {
+      gstLooked = true;
+      return route.fulfill({ json: app() });
+    }
+    if (p.endsWith("/visit")) {
+      visited = true;
+      return route.fulfill({ json: app() });
+    }
+    return route.fulfill({ json: app() });
+  });
+  await page.goto(`/en/kyc?o=${ORDER_ID}`);
+  await expect(page.getByTestId("journey-steps")).toHaveAttribute("data-step", "3");
+  const form = page.getByTestId("kyc-on-record");
+  await form.getByLabel(/GSTIN/).fill("29ABCDE1234F1Z5");
+  await form.getByLabel(/Udyam number/).focus(); // leaving the GSTIN field checks it
+  await expect(page.getByTestId("gst-preview")).toContainText("A*** D*****, Karnataka. Is this your business?");
+  await form.getByRole("button", { name: "Continue to documents" }).click();
+
+  await page.getByTestId("kyc-online-GST_CERTIFICATE").click();
+  await expect(page.getByTestId("kyc-slot-GST_CERTIFICATE").getByTestId("kyc-slot-done")).toHaveText("Verified from registry");
+  await expect(page.getByTestId("kyc-online-UDYAM_CERTIFICATE")).toHaveCount(0); // no Udyam on record
+
+  await page.getByTestId("kyc-visit-ask").click();
+  await expect(page.getByTestId("kyc-visit")).toContainText("a local partner will call you");
+  expect(calls).toContain(`POST /api/v1/kyc/applications/${APP_ID}/gst/lookup`);
+  expect(calls).toContain(`POST /api/v1/kyc/applications/${APP_ID}/visit`);
 });

@@ -6,10 +6,10 @@
     "num_sites": "How many locations or branches do you have?",
     "has_gstin": "Is your business registered for GST?",
     "current_internet": "What internet do you use today — business broadband, home broadband, a mobile hotspot, a leased line, or none?",
-    "needs": "Anything else you need — WhatsApp for business, a website, POS, CCTV, Wi-Fi, backup or phone lines? You can also say no."
+    "needs": "Anything else you need — for example customer Wi-Fi, CCTV cameras or a website? You can also say no, or “not sure”."
   },
   "notices": {
-    "WELCOME": "Hi! I'll ask a few quick questions and suggest the right plan for your business. Please don't share ID numbers or phone numbers here.",
+    "WELCOME": "Hi! Just a few quick questions, then you'll see your plan and monthly price. Please don't share ID numbers or phone numbers here.",
     "CITY_UNKNOWN": "I don't know that city yet. Could you tell me the nearest big city?",
     "INVALID_VALUE": "That doesn't look right — could you check it?",
     "INJECTION_REFUSED": "I can only help you choose a plan; I can't change prices or share internal information. Let's continue.",
@@ -18,7 +18,11 @@
     "MESSAGE_TOO_LONG": "That message is a bit long — please keep it short.",
     "LANGUAGE_FALLBACK": "Sorry, I'll continue in English for now.",
     "PII_REMOVED": "I removed an ID or contact number from your message — you won't need it until checkout.",
-    "DONE": "Here is the plan I recommend."
+    "DONE": "Here is the plan I recommend.",
+    "UNSURE_PICKED": "No problem — I'll go with what suits most businesses like yours. You can change it later.",
+    "UNSURE_ROUGH": "No problem — a rough answer is fine.",
+    "REFINE": "Sure — a few quick questions to fine-tune your plan. You can say “not sure” to any of them.",
+    "WELCOME_BACK": "Welcome back! Let's carry on where you left off."
   },
   "reasons": {
     "TIER_NOT_SERVED": "not available in your city yet",

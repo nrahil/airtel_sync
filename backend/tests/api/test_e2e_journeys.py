@@ -100,6 +100,11 @@ def test_e2e_01_hindi_journey_from_advisor_to_live_service(client: TestClient) -
     body = ok(client.post(f"{ADVISOR}/{sid}/turns", json={"text": "मेरी सूरत में दुकान है"}))
     assert body["mode"] == "form"
     for slot, value in HINDI_FORM:
+        if body["question"] is None:  # plan shown after the essentials: fine-tune the rest
+            assert body["status"] == "QUOTED"
+            body = ok(client.post(f"{ADVISOR}/{sid}/turns", json={"action": "refine"}))
+        if slot == "current_internet":
+            continue  # never asked any more: it changes no product or price
         assert body["question"]["slot"] == slot
         body = ok(client.post(f"{ADVISOR}/{sid}/turns", json={"slot": slot, "value": value}))
     assert body["status"] == "QUOTED"

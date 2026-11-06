@@ -41,12 +41,27 @@ def test_e2e_05_journey_completes_with_groq_disabled(client: TestClient) -> None
     r = client.post(f"{BASE}/{sid}/turns", json={"text": "मेरी सूरत में किराने की दुकान है"})
     body = r.json()
     assert body["mode"] == "form"
-    for slot, value in FORM_ANSWERS:
+    for slot, value in FORM_ANSWERS[:3]:  # plan first: three questions
+        assert body["question"]["slot"] == slot
+        assert body["progress"]["total"] == 3
+        r = client.post(f"{BASE}/{sid}/turns", json={"slot": slot, "value": value})
+        assert r.status_code == 200, r.text
+        body = r.json()
+    assert body["status"] == "QUOTED"
+    assert body["assumed"] == ["num_sites", "has_gstin", "needs"]
+    assert body["can_refine"] is True
+    # Fine-tune: the skipped questions, then the plan again.
+    body = client.post(f"{BASE}/{sid}/turns", json={"action": "refine"}).json()
+    for slot, value in FORM_ANSWERS[3:]:
+        if slot == "current_internet":
+            continue  # never asked: it changes no product or price
         assert body["question"]["slot"] == slot
         r = client.post(f"{BASE}/{sid}/turns", json={"slot": slot, "value": value})
         assert r.status_code == 200, r.text
         body = r.json()
     assert body["status"] == "QUOTED"
+    assert body["assumed"] == []
+    assert body["can_refine"] is False
     rec = body["recommendation"]
     assert rec["explanation"]["source"] == "template"
     lines = rec["pricing"]["lines"]
@@ -115,3 +130,27 @@ def test_session_stores_no_pii(client: TestClient) -> None:
     with client.app.state.engine.connect() as conn:  # type: ignore[attr-defined]
         stall = conn.execute(text("SELECT stall_reason FROM advisor_sessions")).scalar()
     assert stall == "LLM_UNAVAILABLE"  # surfaced to the back office in Phase 8
+
+
+def test_resume_returns_the_current_question(client: TestClient) -> None:
+    sid = client.post(BASE, json={"mode": "form"}).json()["session_id"]
+    client.post(f"{BASE}/{sid}/turns", json={"slot": "segment", "value": "prof"})
+    body = client.get(f"{BASE}/{sid}").json()
+    assert body["question"]["slot"] == "city"
+    assert body["progress"] == {"step": 2, "total": 3}
+    assert body["messages"][0]["text"] == msg.notice("WELCOME_BACK", "en")
+    assert client.get(f"{BASE}/00000000-0000-0000-0000-000000000000").status_code == 404
+
+
+def test_not_sure_button_and_turn_validation(client: TestClient) -> None:
+    sid = client.post(BASE, json={"mode": "form"}).json()["session_id"]
+    for slot, value in FORM_ANSWERS[:3]:
+        client.post(f"{BASE}/{sid}/turns", json={"slot": slot, "value": value})
+    body = client.post(f"{BASE}/{sid}/turns", json={"action": "refine"}).json()
+    assert body["question"]["slot"] == "num_sites"
+    assert body["progress"] == {"step": 1, "total": 3}
+    body = client.post(f"{BASE}/{sid}/turns", json={"slot": "num_sites", "unsure": True}).json()
+    assert body["question"]["slot"] == "has_gstin"
+    assert body["slots"]["num_sites"] is None
+    for bad in ({"unsure": True}, {"action": "refine", "text": "hi"}, {"action": "other"}, {}):
+        assert client.post(f"{BASE}/{sid}/turns", json=bad).status_code == 422, bad

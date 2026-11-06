@@ -73,6 +73,7 @@ _FIELD_ADAPTERS: Final[dict[str, TypeAdapter[Any]]] = {
 class Extracted:
     values: dict[str, Any]
     rejected: tuple[str, ...]  # present but invalid → re-ask
+    unsure: bool = False  # the owner doesn't know / asks us to choose
 
 
 class InvalidLlmOutputError(ValueError):
@@ -109,7 +110,7 @@ def parse_llm_slots(raw: str) -> Extracted:
             values[name] = validate_slot(name, data[name])
         except ValueError:
             rejected.append(name)
-    return Extracted(values, tuple(rejected))
+    return Extracted(values, tuple(rejected), unsure=data.get("unsure") is True)
 
 
 def merge(slots: Slots, values: dict[str, Any]) -> Slots:

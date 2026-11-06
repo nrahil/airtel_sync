@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Final
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.orm import Session
 
 from app.audit.log import AuditLog
@@ -74,22 +74,25 @@ class TrackerError(Exception):
         return {"code": self.code, **self.extra}
 
 
-def latest_kyc(db: Session, principal: str) -> KycApplication | None:
-    """The person's most recent KYC application (a PASS one wins)."""
-    passed = db.scalar(
-        select(KycApplication)
-        .where(KycApplication.principal_token == principal, KycApplication.status == KycStatus.PASS)
-        .order_by(KycApplication.updated_at.desc())
-        .limit(1)
-    )
-    if passed is not None:
-        return passed
-    return db.scalar(
-        select(KycApplication)
-        .where(KycApplication.principal_token == principal)
-        .order_by(KycApplication.updated_at.desc())
-        .limit(1)
-    )
+def _latest(db: Session, *where: ColumnElement[bool]) -> KycApplication | None:
+    """Most recent matching application; a PASS one wins."""
+    newest = select(KycApplication).where(*where).order_by(KycApplication.updated_at.desc())
+    passed = db.scalar(newest.where(KycApplication.status == KycStatus.PASS).limit(1))
+    return passed if passed is not None else db.scalar(newest.limit(1))
+
+
+def latest_kyc(db: Session, order: Order) -> KycApplication | None:
+    """The KYC behind this order (a PASS one wins).
+
+    The order's own application if one was started for it; otherwise the person's latest
+    application not tied to any order. An application tied to *another* order never
+    counts: each order may be for a different business (GSTIN / Udyam).
+    """
+    mine = KycApplication.principal_token == order.principal_token
+    own = _latest(db, mine, KycApplication.order_id == order.id)
+    if own is not None:
+        return own
+    return _latest(db, mine, KycApplication.order_id.is_(None))
 
 
 class TrackerService:
@@ -133,7 +136,7 @@ class TrackerService:
         """Move an order waiting on KYC to match the person's latest verdict."""
         if order.state not in AWAITING_KYC:
             return False
-        kyc = latest_kyc(db, order.principal_token)
+        kyc = latest_kyc(db, order)
         target = KYC_TO_ORDER[kyc.status] if kyc is not None else None
         if target is None or target is order.state:
             return False
@@ -311,7 +314,7 @@ class TrackerService:
         )
         line_eta = {x.product_id: x for x in eta.lines}
         history = self._history(db, order)
-        kyc = latest_kyc(db, order.principal_token)
+        kyc = latest_kyc(db, order)
         verdict = (kyc.last_verdict or {}) if kyc is not None else {}
         show_eta = order.state not in (S.CANCELLED, S.NOT_FEASIBLE)
         paid = sum(p.amount_paise for p in order.payments if p.status is PaymentStatus.SUCCEEDED)

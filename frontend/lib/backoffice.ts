@@ -57,6 +57,8 @@ export interface SessionRow {
   order_id: string | null;
   order_state: string | null;
   contactable: boolean;
+  /** The owner asked to be called (shown first). */
+  callback_requested_at?: string | null;
   assigned_partner: string | null;
   score: number | null;
   factors: Factor[];

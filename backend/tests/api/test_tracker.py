@@ -384,3 +384,32 @@ def test_fulfilment_endpoint_does_not_exist_in_production(make_kyc_app: MakeApp)
         r = fulfil(c, headers, order["order_id"], "FEASIBILITY_CHECK")
         assert r.status_code == 404
         assert get(c, headers, order["order_id"]).json()["tracker"]["can_simulate"] is False
+
+
+# ------------------------------------------------- KYC belongs to one order
+
+
+def test_kyc_of_one_order_is_not_reused_for_the_next(client: TestClient) -> None:
+    """A second order may be another business: it starts its own KYC, not the first's."""
+    headers, first = ordered(client)
+    _, second = ordered(client, headers)
+    set_kyc(client, headers, KycStatus.PASS, order_id=first["order_id"])
+
+    assert get(client, headers, first["order_id"]).json()["tracker"]["kyc"]["status"] == "PASS"
+    kyc = get(client, headers, second["order_id"]).json()["tracker"]["kyc"]
+    assert kyc["application_id"] is None
+    r = pay(client, headers, second["order_id"], key(), simulate="success")
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "KYC_NOT_VERIFIED"
+
+
+def test_kyc_application_is_created_for_an_owned_order_only(client: TestClient) -> None:
+    headers, order = ordered(client)
+    other, _ = ordered(client)
+    kyc = "/api/v1/kyc/applications"
+
+    assert client.post(kyc, json={"order_id": order["order_id"]}, headers=other).status_code == 404
+    r = client.post(kyc, json={"order_id": order["order_id"]}, headers=headers)
+    assert r.status_code == 201, r.text
+    tracker = get(client, headers, order["order_id"]).json()["tracker"]["kyc"]
+    assert tracker["application_id"] == r.json()["application_id"]

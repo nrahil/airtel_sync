@@ -583,6 +583,8 @@ def test_every_reason_with_a_user_action_has_an_english_message() -> None:
         KycReason.UDYAM_ACTIVITY_MISMATCH,
         KycReason.UDYAM_OCR_CORRECTED,
         KycReason.UDYAM_VERIFIED_BY_LOOKUP,
+        KycReason.GSTIN_VERIFIED_BY_LOOKUP,
+        KycReason.VISIT_REQUESTED,  # a back-office queue reason, never a fix
     }
     assert set(KycReason) - silent <= set(_EN)
 

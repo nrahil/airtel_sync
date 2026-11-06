@@ -9,7 +9,7 @@ import pytest
 
 from app.advisor import messages as msg
 from app.advisor.fallback_flow import FORM, InputKind, coerce_answer, question_payload
-from app.advisor.planner import ORDER
+from app.advisor.planner import ESSENTIAL, REFINE
 from app.advisor.slots import SlotName
 from app.domain.profile import MAX_EMPLOYEES, Need
 
@@ -17,7 +17,7 @@ from app.domain.profile import MAX_EMPLOYEES, Need
 
 
 def test_every_planned_slot_can_be_asked_as_a_form() -> None:
-    assert set(FORM) == set(ORDER)
+    assert {*ESSENTIAL, *REFINE} <= set(FORM)
 
 
 def test_city_question_offers_known_cities(dataset: Any) -> None:

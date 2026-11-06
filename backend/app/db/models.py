@@ -223,6 +223,8 @@ class AdvisorSession(Base):
     slots: Mapped[dict[str, Any]] = mapped_column(default=dict)
     stall_reason: Mapped[str | None] = mapped_column(String(64))
     principal_token: Mapped[str | None] = mapped_column(String(64), index=True)
+    # The owner asked to be called about this plan (consent given with the request).
+    callback_requested_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(default=_now)
     updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
 
@@ -383,6 +385,10 @@ class KycApplication(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     principal_token: Mapped[str] = mapped_column(String(64), index=True)
+    # The order this KYC verifies. Each order may be for a different business, so an
+    # application tied to one order never stands in for another. ``None`` = not tied
+    # to an order (done via the API before / without one).
+    order_id: Mapped[str | None] = mapped_column(ForeignKey("orders.id"), index=True)
     status: Mapped[KycStatus] = mapped_column(_enum(KycStatus), default=KycStatus.DRAFT)
     context_sealed: Mapped[bytes] = mapped_column(LargeBinary)
     failed_attempts: Mapped[int] = mapped_column(Integer, default=0)

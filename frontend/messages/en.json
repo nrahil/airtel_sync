@@ -18,7 +18,31 @@
     "noneOfThese": "None of these",
     "restart": "Start again",
     "error": "Something went wrong. Please try again.",
-    "thinking": "Thinking…"
+    "thinking": "Thinking…",
+    "progress": "Question {step} of {total}",
+    "notSure": "Not sure — pick for me",
+    "assumedTitle": "This plan assumes:",
+    "assumed": {
+      "num_sites": "one location",
+      "has_gstin": "GST registration not confirmed yet",
+      "needs": "the standard package for businesses like yours"
+    },
+    "refine": "Fine-tune my plan",
+    "refineHint": "Optional · about 30 seconds",
+    "suggestedTitle": "Businesses like yours usually add:",
+    "seeAll": "See all options",
+    "showFewer": "Show fewer options",
+    "help": {
+      "title": "Need a hand?",
+      "callMe": "Have someone call me",
+      "textMe": "Text me a link to finish later",
+      "callIntro": "Confirm your mobile number and we'll call you once about this plan. Your number is used only for this.",
+      "textIntro": "Confirm your mobile number and we'll send you a link to carry on later.",
+      "callDone": "Done — someone from our team will call you soon, usually within one working day.",
+      "textDone": "Sent! Open the link on your phone whenever you're ready.",
+      "failed": "That didn't work. Please try again.",
+      "cancel": "Cancel"
+    }
   },
   "segment": {
     "micro": "Shop or local service",
@@ -35,22 +59,22 @@
     "none": "No internet"
   },
   "needs": {
-    "internet": "Internet",
-    "mobile_lines": "Mobile lines",
-    "whatsapp": "WhatsApp for business",
-    "sms": "Bulk SMS",
-    "email": "Business email",
-    "backup": "Cloud backup",
-    "website": "Website",
-    "pos": "Card / UPI payments (POS)",
-    "security": "Cyber security",
-    "wifi": "Wi-Fi",
-    "cctv": "CCTV",
-    "iot": "Machine sensors (IoT)",
-    "fleet": "Vehicle tracking",
-    "telephony": "Office phone lines",
-    "failover": "Backup internet",
-    "static_ip": "Static IP"
+    "internet": "Internet for the business",
+    "mobile_lines": "Mobile phone lines for staff",
+    "whatsapp": "Chat with customers on WhatsApp",
+    "sms": "Send SMS alerts and offers",
+    "email": "Business email (you@yourbusiness)",
+    "backup": "Automatic backup of files and photos",
+    "website": "A simple website for your business",
+    "pos": "Take card and UPI payments, with billing",
+    "security": "Protect computers from viruses",
+    "wifi": "Wi-Fi for staff and customers",
+    "cctv": "Security cameras you can watch on your phone",
+    "iot": "Track machines in your workshop",
+    "fleet": "Track your vehicles",
+    "telephony": "Office phone lines with a call menu",
+    "failover": "Backup internet if the main line goes down",
+    "static_ip": "Fixed internet address (for cameras or servers)"
   },
   "quote": {
     "title": "Your recommended plan",
@@ -94,7 +118,8 @@
     "expired": "This price has expired. Get today's price to continue.",
     "refresh": "Get today's price",
     "notFound": "We couldn't find this plan. Please start again.",
-    "backToAdvisor": "Back to the advisor"
+    "backToAdvisor": "Back to the advisor",
+    "suggestedExtras": "Suggested extras — switch them on in the next step:"
   },
   "otp": {
     "title": "Confirm your mobile number",
@@ -265,6 +290,22 @@
       "PENDING": "The government registry isn't responding. Please try again in a few minutes.",
       "ACTION_NEEDED": "A few things need fixing:",
       "FAIL": "We couldn't verify these documents:"
-    }
+    },
+    "gstFound": "Found in the GST registry: {name}, {state}. Is this your business?",
+    "gstNotFound": "We couldn't find this GSTIN. Please check it — or leave it blank.",
+    "verifyGst": "Verify my GSTIN online instead — no certificate needed",
+    "verifyUdyam": "Verify my Udyam number online instead",
+    "visitTitle": "Prefer not to upload?",
+    "visitBody": "A local partner can visit your business and collect the documents.",
+    "visitAsk": "Ask for a visit",
+    "visitDone": "Done — a local partner will call you to arrange a visit. You can still upload here if you like."
+  },
+  "journey": {
+    "label": "Your progress",
+    "plan": "Plan",
+    "signIn": "Your number",
+    "documents": "Documents",
+    "pay": "Pay",
+    "step": "Step {step} of {total}"
   }
 }

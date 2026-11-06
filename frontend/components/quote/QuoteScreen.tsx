@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { JourneySteps } from "@/components/JourneySteps";
 import {
   ApiError,
   type Fix,
@@ -126,6 +127,7 @@ export function QuoteScreen({ locale, t }: { locale: Locale; t: Messages }) {
 
   return (
     <div className="flex flex-col gap-5">
+      <JourneySteps t={t} current={1} />
       <article
         data-testid="quote"
         className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-700"

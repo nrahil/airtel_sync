@@ -21,6 +21,9 @@ the message does not state it; never guess):
              "backup", "website", "pos", "security", "wifi", "cctv", "iot", "fleet",
              "telephony", "failover", "static_ip"
 
+  "unsure": true — only if the owner says they don't know, aren't sure, or asks you
+             to decide / recommend for the question they are answering
+
 The message may be in Hindi, English or another Indian language, or mixed. Numbers
 may be written as words. Placeholders like [GSTIN], [PHONE] or [NAME] replace
 personal data that was removed; never try to reconstruct it.

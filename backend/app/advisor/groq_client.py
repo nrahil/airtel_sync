@@ -2,6 +2,9 @@
 
 * Timeout per call, **one** jittered retry on timeout / 429 / 5xx, then give up:
   callers fall back to templates or the guided form (N1, LL-07).
+* JSON mode: a model that fails to produce valid JSON gets HTTP 400
+  ``json_validate_failed``. That is a bad *answer*, not an outage: retried once,
+  then :class:`LlmBadOutputError` — callers re-ask instead of leaving chat.
 * ``max_tokens`` cap and temperature 0 for extraction (LLM04).
 * No tools / function calling are ever sent (LLM08).
 * The API key is never logged; message content is never logged.
@@ -26,6 +29,20 @@ _RETRY_BASE_SECONDS: Final = 0.25
 
 class LlmUnavailableError(RuntimeError):
     """Groq is disabled, timed out, rate-limited or returned something unusable."""
+
+
+class LlmBadOutputError(LlmUnavailableError):
+    """Groq is up but this reply wasn't valid JSON (``json_validate_failed``)."""
+
+
+def _bad_json(response: httpx.Response) -> bool:
+    if response.status_code != 400:
+        return False
+    try:
+        error = response.json().get("error") or {}
+    except (ValueError, AttributeError):
+        return False
+    return isinstance(error, dict) and error.get("code") == "json_validate_failed"
 
 
 class LlmClient(Protocol):
@@ -92,6 +109,7 @@ class GroqClient:
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
 
+        bad_output = False
         for attempt in (1, 2):
             try:
                 response = await self._post(payload)
@@ -101,12 +119,18 @@ class GroqClient:
                 if response.status_code == 200:
                     return _content(response)
                 failure = f"HTTP {response.status_code}"
-                if response.status_code not in RETRYABLE_STATUS:
+                bad_output = _bad_json(response)
+                if bad_output:
+                    failure = "invalid JSON from model"
+                elif response.status_code not in RETRYABLE_STATUS:
                     break
             if attempt == 1:
                 delay = _RETRY_BASE_SECONDS * (1 + self._rng.random())
                 log.warning("groq %s; retrying once in %.2fs", failure, delay)
                 await asyncio.sleep(delay)
+        if bad_output:
+            log.info("groq returned invalid JSON twice; re-asking")
+            raise LlmBadOutputError(failure)
         log.warning("groq unavailable (%s); falling back", failure)
         raise LlmUnavailableError(failure)
 
