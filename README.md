@@ -31,7 +31,7 @@
 Check with `tesseract --version` (it must report 5.x). The backend refuses to start without it unless `TESSERACT_REQUIRED=false`; `/healthz` then reports `"tesseract": "degraded"`.
 
 ### Groq (optional)
-Create a key at <https://console.groq.com> and set `GROQ_API_KEY` in `.env` (model `GROQ_MODEL`, default `llama-3.3-70b-versatile`). Leave it empty and the advisor runs entirely on its own templates and the guided form. Only PII-redacted chat text is ever sent to Groq, never documents.
+Create a key at <https://console.groq.com> and set `GROQ_API_KEY` in `.env` (model `GROQ_MODEL`, default `openai/gpt-oss-120b`; Groq has retired `llama-3.3-70b-versatile`). Leave it empty and the advisor runs entirely on its own templates and the guided form. Only PII-redacted chat text is ever sent to Groq, never documents.
 
 ## Setup
 

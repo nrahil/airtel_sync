@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from dotenv import dotenv_values
 from hypothesis import settings
 
 from app.config import Settings, get_clock, get_settings
@@ -64,19 +65,48 @@ TESSERACT_OK = TesseractStatus(True, "5.3.0", "Tesseract 5.3.0")
 TESSERACT_MISSING = TesseractStatus(False, None, "Tesseract binary 'tesseract' not found.")
 
 
+_ISOLATED_VARS = (
+    "TODAY_OVERRIDE",
+    "ENVIRONMENT",
+    "MASTER_KEY",
+    "QUOTE_HMAC_KEY",
+    "GROQ_API_KEY",
+    "DATA_DIR",
+    "DATABASE_URL",
+)
+
+
+# Machine-specific settings tests may take from the developer's .env (e.g. where
+# Tesseract is installed on Windows). Allowlist only: secrets and behaviour flags stay out.
+_DOTENV_ALLOWLIST = ("TESSERACT_CMD",)
+
+
+def _dotenv_passthrough() -> dict[str, str]:
+    """Allowlisted values from the developer's .env files (Settings' files and precedence)."""
+    merged: dict[str, str] = {}
+    for path in (BACKEND_DIR / ".env", BACKEND_DIR.parent / ".env"):
+        if path.is_file():
+            merged.update({k.upper(): v for k, v in dotenv_values(path).items() if v})
+    return {k: merged[k] for k in _DOTENV_ALLOWLIST if k in merged}
+
+
+_DOTENV_PASSTHROUGH = _dotenv_passthrough()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Keep tests independent of the developer's shell/.env and of cached singletons."""
-    for var in (
-        "TODAY_OVERRIDE",
-        "ENVIRONMENT",
-        "MASTER_KEY",
-        "QUOTE_HMAC_KEY",
-        "GROQ_API_KEY",
-        "DATA_DIR",
-        "DATABASE_URL",
-    ):
+    """Keep tests independent of the developer's shell/.env and of cached singletons.
+
+    Settings must not read .env itself: a deleted env var would otherwise fall back to
+    the file (e.g. a local TODAY_OVERRIDE breaking production-mode tests). Harmless
+    machine settings such as TESSERACT_CMD are passed through as env vars instead.
+    """
+    for var in _ISOLATED_VARS:
         monkeypatch.delenv(var, raising=False)
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    for key, value in _DOTENV_PASSTHROUGH.items():
+        if key not in os.environ:
+            monkeypatch.setenv(key, value)
     get_settings.cache_clear()
     get_clock.cache_clear()
     yield
