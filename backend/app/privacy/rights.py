@@ -38,6 +38,7 @@ from app.consent.service import ConsentService
 from app.db.models import (
     AdvisorSession,
     ConsentAction,
+    ConsentPurpose,
     KycApplication,
     KycDocument,
     KycStatus,
@@ -56,6 +57,7 @@ from app.kyc.types import ApplicationContext
 from app.orders.notifications import OrderNotifier
 from app.orders.service import TrackerService
 from app.orders.state_machine import OWNER_CANCELLABLE
+from app.security.pii_mask import mask_gstin, mask_name, mask_phone, mask_udyam
 from app.security.vault import ErasedError, Vault, VaultKeyError
 
 log = logging.getLogger("udyam.privacy")
@@ -194,6 +196,75 @@ class PrivacyRights:
             ],
             "orders": [self._order(o) for o in orders],
             "kyc_applications": [self._application(a) for a in applications],
+        }
+
+    def summary(self, principal: str) -> dict[str, Any]:
+        """What we hold, masked, for the "My data" screen. The full copy is :meth:`export`."""
+        db = self.db
+        phone = self.notifier.contact(db, principal)
+        ledger = ConsentLedger(db, self.clock)
+        consents: dict[str, Any] = {}
+        for purpose in ConsentPurpose:
+            event = ledger.latest(principal, purpose)
+            consents[purpose.value] = {
+                "granted": event is not None and event.action is ConsentAction.GRANT,
+                "at": event.at.isoformat() if event is not None else None,
+            }
+        sessions = db.scalars(
+            select(AdvisorSession.id).where(AdvisorSession.principal_token == principal)
+        ).all()
+        orders = db.scalars(
+            select(Order).where(Order.principal_token == principal).order_by(Order.created_at)
+        ).all()
+        applications = db.scalars(
+            select(KycApplication)
+            .where(KycApplication.principal_token == principal)
+            .order_by(KycApplication.created_at)
+        ).all()
+        return {
+            "phone": mask_phone(phone) if phone else None,
+            "consents": consents,
+            "advisor_sessions": len(sessions),
+            "orders": [
+                {
+                    "order_id": o.id,
+                    "state": o.state.value,
+                    "created_at": o.created_at.isoformat(),
+                    "products": [x["product_name"] for x in o.quote.payload["lines"]],
+                }
+                for o in orders
+            ],
+            "kyc_applications": [self._application_masked(a) for a in applications],
+        }
+
+    def _application_masked(self, app: KycApplication) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "application_id": app.id,
+            "status": app.status.value,
+            "created_at": app.created_at.isoformat(),
+        }
+        try:
+            ctx = self.kyc.context(app)
+        except (BlobIntegrityError, VaultKeyError, ErasedError):
+            return {**base, "readable": False, "on_record": None, "documents": []}
+        return {
+            **base,
+            "readable": True,
+            "on_record": {
+                "contact_name": mask_name(ctx.contact_name) if ctx.contact_name else None,
+                "gstin": mask_gstin(ctx.gstin_on_record) if ctx.gstin_on_record else None,
+                "udyam_number": mask_udyam(ctx.udyam_on_record) if ctx.udyam_on_record else None,
+            },
+            "documents": [
+                {
+                    "slot": doc.slot,
+                    "source": doc.source,
+                    "uploaded_at": doc.uploaded_at.isoformat(),
+                    "image_retained": doc.blob_key is not None,
+                    "image_delete_after": _iso(doc.expires_at),
+                }
+                for doc in sorted(app.documents, key=_slot)
+            ],
         }
 
     @staticmethod

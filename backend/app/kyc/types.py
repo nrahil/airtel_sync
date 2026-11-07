@@ -62,6 +62,7 @@ class Source(StrEnum):
     OCR = "OCR"
     MANUAL = "MANUAL"  # typed by the applicant (N2 fallback) — always human-reviewed
     LOOKUP = "LOOKUP"  # verified by registry lookup of the number on record (K05)
+    DIGILOCKER = "DIGILOCKER"  # issuer-signed copy fetched from DigiLocker: no OCR, no photo
 
 
 class KycReason(StrEnum):
@@ -116,6 +117,7 @@ class KycReason(StrEnum):
     # journey (J7)
     HANDOFF_REPEATED_FAILURES = "HANDOFF_REPEATED_FAILURES"
     VISIT_REQUESTED = "VISIT_REQUESTED"  # the owner asked for a visit instead of uploading
+    FETCHED_FROM_DIGILOCKER = "FETCHED_FROM_DIGILOCKER"  # issuer-signed, so trusted as read
 
 
 class FieldValue(_Frozen):

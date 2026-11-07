@@ -1,5 +1,6 @@
 """DPDP rights (``/api/v1/privacy``) — see :mod:`app.privacy.rights`.
 
+* ``GET    /summary``                 what is held about me, masked (the "My data" screen).
 * ``GET    /export``                  everything held about me, decrypted (``no-store``).
 * ``PATCH  /kyc/{application_id}``    correct my KYC details on record (re-checked).
 * ``POST   /withdrawal``              withdraw consent for one purpose.
@@ -80,6 +81,13 @@ def _rights(request: Request, db: Session, clock: Clock) -> PrivacyRights:
 
 def _fail(exc: RightsError) -> HTTPException:
     return HTTPException(exc.status, exc.body())
+
+
+@router.get("/summary")
+def summary(request: Request, db: Db, clock: ClockDep, principal: Principal) -> JSONResponse:
+    """What we hold about me, masked, for the "My data" screen."""
+    body = _rights(request, db, clock).summary(principal)
+    return JSONResponse(body, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/export")

@@ -188,22 +188,25 @@
     "verified": "Mobile number confirmed"
   },
   "consent": {
-    "noticeVersion": "2026-11-04.1",
+    "noticeVersion": "2026-11-07.1",
     "title": "Your data, your choice",
     "intro": "Before we check your business documents, here is what we use, why, and for how long. Each choice is separate, and you can change your mind at any time.",
     "required": "Needed to buy",
     "optional": "Optional",
     "NEEDS_ASSESSMENT": {
       "title": "Plan recommendation",
-      "body": "Use your business type, city, team size and needs to suggest and price a plan."
+      "body": "Use your business type, city, team size and needs to suggest and price a plan.",
+      "keep": "Kept: with your plan and order, until you ask us to delete it."
     },
     "KYC_VERIFICATION": {
       "title": "Business verification (KYC)",
-      "body": "Read your GST, Udyam, ID and address documents and check them against government registries, as the law requires before connecting a business line."
+      "body": "Read your GST, Udyam, ID and address documents and check them against government registries, as the law requires before connecting a business line.",
+      "keep": "Kept: document photos for 7 days after your service starts or you cancel; checked details as long as the law requires."
     },
     "MARKETING": {
       "title": "Offers and updates",
-      "body": "Occasional messages about new services. Off unless you turn it on."
+      "body": "Occasional messages about new services. Off unless you turn it on.",
+      "keep": "Kept: until you turn it off."
     },
     "processorsTitle": "Who handles your data",
     "processors": "Accel Business. Our AI helper (Groq, outside India) only sees your chat with ID and phone numbers removed — never your documents.",
@@ -214,7 +217,9 @@
     "save": "Save my choices",
     "needRequired": "Both “Needed to buy” items are required to continue. You can still save your choices.",
     "saved": "Your choices are saved.",
-    "outdated": "This notice was updated. Please review it again."
+    "outdated": "This notice was updated. Please review it again.",
+    "myData": "See, download or delete your data at any time: My data",
+    "reload": "Reload the page"
   },
   "checkout": {
     "title": "Checkout",
@@ -240,7 +245,15 @@
     "consentRequired": "Please accept the required consents first.",
     "backToPlan": "Back to my plan",
     "signIn": "Confirm your number to continue",
-    "trackLink": "Track this order"
+    "trackLink": "Track this order",
+    "signTitle": "Sign your order form",
+    "signIntro": "This replaces a paper signature. By signing you agree to these services, this price and this contract length.",
+    "signSend": "Send code to my Aadhaar-linked mobile",
+    "signConfirm": "Sign",
+    "signed": "Signed on {date}",
+    "signNext": "Your documents are verified. Next: sign your order form.",
+    "noKycTitle": "Rather not share documents online?",
+    "noKycBody": "Someone from our team can call you and arrange a visit to collect them instead."
   },
   "track": {
     "title": "Track your order",
@@ -286,6 +299,7 @@
     "next": {
       "KYC": "Next: verify your business documents. You pay after verification.",
       "FIX_KYC": "One of your documents needs a fix:",
+      "SIGN": "Your documents are verified. Next: sign your order form.",
       "PAY": "Your documents are verified. Complete payment to book the installation.",
       "RETRY_PAYMENT": "Your last payment didn't go through and you weren't charged. You can try again.",
       "CHOOSE_ALTERNATIVE": "Fibre can't reach your site, but there is a wireless option.",
@@ -348,7 +362,22 @@
     "visitTitle": "Prefer not to upload?",
     "visitBody": "A local partner can visit your business and collect the documents.",
     "visitAsk": "Ask for a visit",
-    "visitDone": "Done — a local partner will call you to arrange a visit. You can still upload here if you like."
+    "visitDone": "Done — a local partner will call you to arrange a visit. You can still upload here if you like.",
+    "fastestTitle": "Fastest way: about 1 minute",
+    "fastestBody": "Check your GSTIN online and fetch your ID from DigiLocker. Then only your electricity bill needs a photo.",
+    "timeInstant": "instant",
+    "timeDigilocker": "about 30 seconds",
+    "timePhoto": "about 1 minute",
+    "digilocker": "Fetch from DigiLocker",
+    "digilockerTitle": "DigiLocker (demo)",
+    "digilockerAsk": "Udyam Digital asks to fetch your {doc} from your DigiLocker. It is used only to verify your business for this order.",
+    "digilockerIdDoc": "Aadhaar (your name only)",
+    "digilockerUdyamDoc": "Udyam certificate",
+    "digilockerAllow": "Allow",
+    "digilockerDeny": "Don't allow",
+    "digilockerNotLinked": "We couldn't find this in your DigiLocker. Please take a photo instead.",
+    "digilockerDeclined": "Nothing was fetched. You can take a photo instead.",
+    "fetched": "From DigiLocker"
   },
   "journey": {
     "label": "Your progress",
@@ -377,5 +406,40 @@
     "askNew": "Ask them to send a new link.",
     "notFound": "This link doesn't work. Check that it was copied in full.",
     "ownPlan": "Find a plan for your own business"
+  },
+  "privacy": {
+    "title": "My data",
+    "intro": "What we hold about you, and what you can do about it.",
+    "signIn": "Confirm your mobile number to see your data.",
+    "phone": "Mobile number",
+    "consentsTitle": "Your choices",
+    "on": "On",
+    "off": "Off",
+    "withdraw": "Turn off",
+    "withdrawWarn": "Turning this off stops your order: we can't continue without it.",
+    "withdrawn": "Turned off. Document photos will be deleted by {date}.",
+    "turnOnHint": "To turn a choice back on, open the consent page.",
+    "kycTitle": "Business details we checked",
+    "docsTitle": "Documents",
+    "kept": "Photo kept until {date}",
+    "keptWhile": "Photo kept while your order is in progress",
+    "deleted": "Photo deleted",
+    "srcOCR": "Photo",
+    "srcLOOKUP": "Checked online",
+    "srcDIGILOCKER": "From DigiLocker",
+    "srcMANUAL": "Number typed in",
+    "ordersTitle": "Orders",
+    "none": "Nothing yet.",
+    "download": "Download my data",
+    "downloadNote": "A file with everything we hold about you, not masked. Keep it safe.",
+    "deleteTitle": "Delete my data",
+    "deleteBody": "Open orders are cancelled (a payment is refunded), every choice is turned off, and your documents and details are erased. This can't be undone.",
+    "deleteCheck": "I understand this can't be undone",
+    "deleteButton": "Delete everything",
+    "deletedDone": "Everything is deleted. Open orders were cancelled. If you sign in again with the same number you start fresh: earlier orders can't be shown, because nothing links them to you any more.",
+    "deleteBlocked": "We can't delete your data while an engineer visit is booked or your service is live: the law requires us to keep these records while the connection is active. You can still turn off offers.",
+    "grievanceTitle": "Questions or complaints",
+    "grievance": "Grievance officer: privacy@accel.example",
+    "link": "My data"
   }
 }

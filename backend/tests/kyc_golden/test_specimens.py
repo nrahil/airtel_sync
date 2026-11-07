@@ -119,7 +119,7 @@ def test_k11_fix_message_names_the_cut_off_date(registries: Registries) -> None:
     assert "16 Apr 2026" in fix.message
     hindi = verdict_for("K11", registries, locale="hi")
     fix_hi = next(f for f in hindi.fixes if f.reason is KycReason.ADDRESS_PROOF_STALE)
-    assert "16 Apr 2026" in fix_hi.message
+    assert "16 अप्रैल 2026" in fix_hi.message
     assert "बिल" in fix_hi.message
 
 

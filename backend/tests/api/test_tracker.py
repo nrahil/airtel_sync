@@ -126,7 +126,7 @@ def test_tr_02_eta_starts_when_kyc_is_verified(client: TestClient) -> None:
     kyc_passed(client, headers)
     body = get(client, headers, order["order_id"]).json()
     assert body["state"] == "KYC_VERIFIED"  # caught up with the verdict on read
-    assert body["next_action"] == "PAY"
+    assert body["next_action"] == "SIGN"  # e-sign the order form, then pay (Phase 3)
     t = body["tracker"]
     assert t["eta_estimated"] is False
     today = get_clock().today()

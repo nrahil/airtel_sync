@@ -150,6 +150,11 @@ export function Tracker({ locale, t, orderId }: { locale: Locale; t: Messages; o
             {t.kyc.link}
           </Link>
         )}
+        {order.next_action === "SIGN" && (
+          <Link href={`/${locale}/checkout?q=${encodeURIComponent(order.quote_id)}`} data-testid="sign-link" className="self-start font-medium underline">
+            {t.checkout.signTitle}
+          </Link>
+        )}
         {(order.next_action === "PAY" || order.next_action === "RETRY_PAYMENT") && (
           <Link href={`/${locale}/checkout?q=${encodeURIComponent(order.quote_id)}`} className="self-start font-medium underline">
             {t.track.goToPayment}
@@ -284,6 +289,9 @@ export function Tracker({ locale, t, orderId }: { locale: Locale; t: Messages; o
           {problem}
         </p>
       )}
+      <Link href={`/${locale}/privacy`} data-testid="tracker-my-data" className="self-start text-sm text-neutral-600 underline dark:text-neutral-300">
+        {t.privacy.link}
+      </Link>
     </div>
   );
 }

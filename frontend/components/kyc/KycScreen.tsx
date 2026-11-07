@@ -14,6 +14,7 @@ import {
   type KycApplication,
   type Order,
   createKycApplication,
+  fetchFromDigilocker,
   getKycApplication,
   getOrder,
   getToken,
@@ -32,6 +33,10 @@ const APP_KEY = "udyam.kyc.application";
 const ACCEPT = "image/png,image/jpeg,application/pdf";
 /** Slots where the applicant may type the number if the photo can't be read (N2 / K04). */
 const MANUAL_SLOTS: DocSlot[] = ["GST_CERTIFICATE", "UDYAM_CERTIFICATE"];
+/** Documents DigiLocker can hand over, issuer-signed, without a photo. */
+const DIGILOCKER_SLOTS = ["SIGNATORY_ID", "UDYAM_CERTIFICATE"] as const;
+type LockerSlot = (typeof DIGILOCKER_SLOTS)[number];
+const isLockerSlot = (slot: DocSlot): slot is LockerSlot => (DIGILOCKER_SLOTS as readonly string[]).includes(slot);
 const GSTIN_LENGTH = 15;
 
 type Phase = "signin" | "loading" | "onRecord" | "documents";
@@ -60,6 +65,8 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
   const [needsConsent, setNeedsConsent] = useState(false);
   // "Is this your business?" — masked registry preview of the GSTIN typed in.
   const [gstPreview, setGstPreview] = useState<GstinPreview | "none" | null>(null);
+  // DigiLocker's own consent screen, open for one document at a time.
+  const [locker, setLocker] = useState<LockerSlot | null>(null);
 
   const fail = useCallback(
     (e: unknown) => {
@@ -211,6 +218,25 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
     } catch (e) {
       fail(e);
     } finally {
+      setBusy(false);
+    }
+  };
+
+  /** The owner's answer on DigiLocker's consent screen (both are sent: a "no" is audited too). */
+  const answerLocker = async (slot: LockerSlot, allow: boolean) => {
+    if (!app) return;
+    setBusy(true);
+    setProblem(null);
+    try {
+      setApp(await fetchFromDigilocker(app.application_id, slot, allow));
+      setSlot(slot, { busy: false, fix: null });
+    } catch (e) {
+      const code = e instanceof ApiError ? e.code : null;
+      if (code === "DIGILOCKER_NOT_LINKED") setSlot(slot, { busy: false, fix: t.kyc.digilockerNotLinked });
+      else if (code === "DIGILOCKER_DECLINED") setSlot(slot, { busy: false, fix: t.kyc.digilockerDeclined });
+      else fail(e);
+    } finally {
+      setLocker(null);
       setBusy(false);
     }
   };
@@ -384,9 +410,16 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
               data-testid="kyc-to-payment"
               className="self-start font-medium underline"
             >
-              {t.kyc.toPayment}
+              {order.next_action === "SIGN" ? t.checkout.signTitle : t.kyc.toPayment}
             </Link>
           )}
+        </section>
+      )}
+
+      {!passed && (
+        <section data-testid="kyc-fastest" className="rounded-xl bg-green-50 p-3 text-sm text-green-950 dark:bg-green-950 dark:text-green-50">
+          <p className="font-semibold">{t.kyc.fastestTitle}</p>
+          <p>{t.kyc.fastestBody}</p>
         </section>
       )}
 
@@ -410,7 +443,13 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
                   </div>
                   {doc && !state?.fix && (
                     <span data-testid="kyc-slot-done" className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-900 dark:bg-green-900 dark:text-green-100">
-                      {doc.source === "MANUAL" ? t.kyc.typed : doc.source === "LOOKUP" ? t.kyc.lookedUp : t.kyc.uploaded}
+                      {doc.source === "MANUAL"
+                        ? t.kyc.typed
+                        : doc.source === "LOOKUP"
+                          ? t.kyc.lookedUp
+                          : doc.source === "DIGILOCKER"
+                            ? t.kyc.fetched
+                            : t.kyc.uploaded}
                     </span>
                   )}
                 </div>
@@ -426,23 +465,72 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
                     ))}
                   </ul>
                 )}
-                <label
-                  htmlFor={inputId}
-                  className="self-start rounded-lg px-3 py-2 text-sm font-medium ring-1 ring-neutral-300 dark:ring-neutral-600"
-                >
-                  {state?.busy ? t.kyc.uploading : doc ? t.kyc.replace : t.kyc.choose}
-                </label>
                 {!doc && onlineFor(slot) && (
                   <button
                     type="button"
                     data-testid={`kyc-online-${slot}`}
                     disabled={busy}
                     onClick={() => void verifyOnline(slot)}
-                    className="self-start text-left text-sm font-medium text-red-700 underline disabled:opacity-50"
+                    className="self-start rounded-lg bg-red-700 px-3 py-2 text-left text-sm font-medium text-white disabled:opacity-50"
                   >
                     {slot === "GST_CERTIFICATE" ? t.kyc.verifyGst : t.kyc.verifyUdyam}
+                    {" "}
+                    <span className="font-normal opacity-90">· {t.kyc.timeInstant}</span>
                   </button>
                 )}
+                {!doc && isLockerSlot(slot) && locker !== slot && (
+                  <button
+                    type="button"
+                    data-testid={`kyc-digilocker-${slot}`}
+                    disabled={busy}
+                    onClick={() => setLocker(slot)}
+                    className="self-start rounded-lg px-3 py-2 text-left text-sm font-medium text-red-800 ring-1 ring-red-700 disabled:opacity-50 dark:text-red-200"
+                  >
+                    {t.kyc.digilocker}
+                    {" "}
+                    <span className="font-normal">· {t.kyc.timeDigilocker}</span>
+                  </button>
+                )}
+                {locker === slot && isLockerSlot(slot) && (
+                  <div
+                    role="dialog"
+                    aria-label={t.kyc.digilockerTitle}
+                    data-testid="digilocker-consent"
+                    className="flex flex-col gap-2 rounded-xl bg-indigo-50 p-3 text-sm text-indigo-950 ring-1 ring-indigo-200 dark:bg-indigo-950 dark:text-indigo-50 dark:ring-indigo-800"
+                  >
+                    <p className="font-semibold">{t.kyc.digilockerTitle}</p>
+                    <p>
+                      {fill(t.kyc.digilockerAsk, {
+                        doc: slot === "SIGNATORY_ID" ? t.kyc.digilockerIdDoc : t.kyc.digilockerUdyamDoc,
+                      })}
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void answerLocker(slot, true)}
+                        className="rounded-lg bg-indigo-700 px-3 py-2 font-medium text-white disabled:opacity-50"
+                      >
+                        {t.kyc.digilockerAllow}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void answerLocker(slot, false)}
+                        className="rounded-lg px-3 py-2 font-medium ring-1 ring-indigo-300 disabled:opacity-50"
+                      >
+                        {t.kyc.digilockerDeny}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <label
+                  htmlFor={inputId}
+                  className="self-start rounded-lg px-3 py-2 text-sm font-medium ring-1 ring-neutral-300 dark:ring-neutral-600"
+                >
+                  {state?.busy ? t.kyc.uploading : doc ? t.kyc.replace : t.kyc.choose}
+                  {!doc && !state?.busy && <span className="font-normal text-neutral-500"> · {t.kyc.timePhoto}</span>}
+                </label>
                 <input
                   id={inputId}
                   data-testid={`kyc-file-${slot}`}

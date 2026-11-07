@@ -12,7 +12,7 @@ from PIL import Image
 from app.kyc.adapters import DigiLockerStatus, ESignStatus, MockDigiLocker, MockESign
 from app.kyc.ocr import OcrUnavailableError, TesseractEngine
 from app.kyc.storage import BlobIntegrityError, BlobStore, Sealer, sealer_from
-from app.kyc.types import DocSlot, Source
+from app.kyc.types import ApplicationContext, DocSlot, Source
 
 KEY = b"k" * 32
 
@@ -105,28 +105,26 @@ def test_tesseract_crash_and_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_mock_digilocker() -> None:
-    locker = MockDigiLocker(linked={"UDYAM-MH-00-9516696"})
-    got = locker.fetch(
-        DocSlot.UDYAM_CERTIFICATE, identifier="UDYAM-MH-00-9516696", consent_granted=True
-    )
+    locker = MockDigiLocker()
+    ctx = ApplicationContext(contact_name="Joseph Singh", udyam_on_record="UDYAM-MH-00-9516696")
+    got = locker.fetch(DocSlot.UDYAM_CERTIFICATE, ctx=ctx, consent_granted=True)
     assert got.status is DigiLockerStatus.FETCHED
     assert got.extraction is not None
-    assert got.extraction.source is Source.LOOKUP
-    assert (
-        locker.fetch(
-            DocSlot.UDYAM_CERTIFICATE, identifier="UDYAM-MH-00-9516696", consent_granted=False
-        ).status
-        is DigiLockerStatus.CONSENT_DECLINED
-    )
-    assert (
-        locker.fetch(
-            DocSlot.SIGNATORY_ID, identifier="UDYAM-MH-00-9516696", consent_granted=True
-        ).status
-        is DigiLockerStatus.NOT_LINKED
-    )
-    assert (
-        locker.fetch(DocSlot.UDYAM_CERTIFICATE, identifier="other", consent_granted=True).status
-        is DigiLockerStatus.NOT_LINKED
+    assert got.extraction.source is Source.DIGILOCKER
+    assert got.extraction.identifier_reads == ("UDYAM-MH-00-9516696",)
+    signatory = locker.fetch(DocSlot.SIGNATORY_ID, ctx=ctx, consent_granted=True)
+    assert signatory.extraction is not None
+    assert signatory.extraction.fields["name"].text == "Joseph Singh"
+    assert set(signatory.extraction.fields) == {"name"}  # no Aadhaar number, ever
+    declined = locker.fetch(DocSlot.UDYAM_CERTIFICATE, ctx=ctx, consent_granted=False)
+    assert declined.status is DigiLockerStatus.CONSENT_DECLINED
+    empty = ApplicationContext()
+    for slot in DocSlot:
+        assert locker.fetch(slot, ctx=empty, consent_granted=True).status is (
+            DigiLockerStatus.NOT_LINKED
+        )
+    assert locker.fetch(DocSlot.ADDRESS_PROOF, ctx=ctx, consent_granted=True).status is (
+        DigiLockerStatus.NOT_LINKED
     )
 
 

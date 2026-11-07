@@ -12,7 +12,7 @@ from typing import Final
 
 from app.db.models import ConsentPurpose
 
-NOTICE_VERSION: Final = "2026-11-04.1"
+NOTICE_VERSION: Final = "2026-11-07.1"
 
 # Unbundled purposes. Needs assessment and KYC are needed to buy; marketing never is.
 REQUIRED_FOR_CHECKOUT: Final = (ConsentPurpose.NEEDS_ASSESSMENT, ConsentPurpose.KYC_VERIFICATION)

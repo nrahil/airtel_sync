@@ -234,7 +234,7 @@ test("without KYC consent the screen points to the consent page (Hindi)", async 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("अपना व्यवसाय सत्यापित करें");
   await page.getByTestId("kyc-on-record").getByRole("button").click();
   const alert = page.getByRole("alert").filter({ hasText: "KYC" });
-  await expect(alert).toContainText("कृपया पहले व्यवसाय सत्यापन (KYC) की अनुमति दें।");
+  await expect(alert).toContainText("कृपया पहले बिज़नेस की जाँच (KYC) की अनुमति दें।");
   await expect(alert.getByRole("link")).toHaveAttribute("href", "/hi/consent");
 });
 

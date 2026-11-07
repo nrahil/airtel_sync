@@ -146,6 +146,14 @@ test("E2E-01/03/04: Hindi advisor → plan → P03 blocked → dependency cascad
 
   // Pay (setup + first month), then track.
   await page.getByTestId("kyc-to-payment").click();
+  // Round 2 Phase 3: sign the order form (mock Aadhaar OTP) before paying.
+  const esign = page.getByTestId("esign");
+  await esign.getByRole("button", { name: t.checkout.signSend }).click();
+  const signCode = (await esign.getByTestId("esign-dev-code").textContent())?.match(/\d{6}/)?.[0];
+  expect(signCode, "dev e-sign code is echoed outside production").toBeTruthy();
+  await esign.getByLabel(t.otp.code).fill(signCode!);
+  await esign.getByRole("button", { name: t.checkout.signConfirm, exact: true }).click();
+  await expect(page.getByTestId("esigned")).toBeVisible();
   await page.getByRole("button", { name: new RegExp(`^${before(t.checkout.pay)}`) }).click();
   await expect(page.getByTestId("paid")).toContainText(t.checkout.paid);
   await page.getByTestId("track-link").click();

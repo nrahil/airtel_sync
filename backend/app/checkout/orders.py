@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.advisor.service import ProfileIncompleteError
 from app.audit.log import AuditLog
+from app.checkout.esign import EsignService
 from app.checkout.quotes import QuoteService, session_profile
 from app.config import Clock
 from app.db.models import (
@@ -115,11 +116,16 @@ class MockPaymentGateway:
 
 class OrderService:
     def __init__(
-        self, quotes: QuoteService, gateway: MockPaymentGateway, tracker: TrackerService
+        self,
+        quotes: QuoteService,
+        gateway: MockPaymentGateway,
+        tracker: TrackerService,
+        esign: EsignService,
     ) -> None:
         self.quotes = quotes
         self.gateway = gateway
         self.tracker = tracker
+        self.esign = esign
 
     # -------------------------------------------------------------- place
 
@@ -240,6 +246,8 @@ class OrderService:
             raise CheckoutError(
                 409, "KYC_NOT_VERIFIED", kyc_status=kyc.status.value if kyc else None
             )
+        if self.esign.signature(db, order) is None:
+            raise CheckoutError(409, "ESIGN_REQUIRED")
         try:
             verify_integrity(self.quotes.load(order.quote), self.quotes.signer)
         except QuoteTamperedError:
@@ -297,7 +305,8 @@ class OrderService:
         quote = order.quote
         lines = quote.payload["lines"]
         kyc = self.kyc_application(db, order)
-        next_action = _next_action(order, kyc)
+        signed = self.esign.signature(db, order)
+        next_action = _next_action(order, kyc, signed=signed is not None)
         return {
             "order_id": order.id,
             "state": order.state.value,
@@ -313,12 +322,18 @@ class OrderService:
             ],
             "kyc_status": kyc.status.value if kyc else None,
             "next_action": next_action,
+            "esign": {
+                "signed_at": signed.signed_at.isoformat(),
+                "document_sha256": signed.document_sha256,
+            }
+            if signed is not None and signed.signed_at is not None
+            else None,
             "payments": [payment_view(p) for p in order.payments],
             "tracker": self.tracker.view(db, clock, order),
         }
 
 
-def _next_action(order: Order, kyc: KycApplication | None) -> str:
+def _next_action(order: Order, kyc: KycApplication | None, *, signed: bool) -> str:
     """What the owner should do now; ``NONE`` while we are working on it."""
     state = order.state
     if state is OrderState.PAYMENT_FAILED:
@@ -328,7 +343,7 @@ def _next_action(order: Order, kyc: KycApplication | None) -> str:
     if state not in PAYABLE:
         return "NONE"
     if kyc is not None and kyc.status is KycStatus.PASS:
-        return "PAY"
+        return "PAY" if signed else "SIGN"
     if kyc is not None and kyc.status in (KycStatus.ACTION_NEEDED, KycStatus.FAIL):
         return "FIX_KYC"
     return "KYC"

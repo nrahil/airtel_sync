@@ -21,6 +21,7 @@ from app.api.deps import get_db, guarded
 from app.api.v1.quotes import checkout_services
 from app.config import Clock, get_clock
 from app.db.models import ConsentPurpose, KycApplication, Order
+from app.kyc.adapters import DIGILOCKER_SLOTS, DigiLockerStatus
 from app.kyc.messages import fix_message
 from app.kyc.service import KycService, ManualEntryNotAllowedError, NothingOnRecordError
 from app.kyc.types import ApplicationContext, Check, CheckStatus, DocSlot
@@ -54,6 +55,12 @@ class CreateApplication(BaseModel):
     udyam_number: Annotated[str | None, Field(max_length=25)] = None
     # The order this KYC is for; its documents are then checked only for that order.
     order_id: Annotated[str | None, Field(max_length=36)] = None
+
+
+class DigiLockerAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    allow: bool
 
 
 class ManualEntry(BaseModel):
@@ -196,6 +203,33 @@ def verify_gstin_on_record(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, {"code": "NOTHING_ON_RECORD"}
         ) from None
+    return _summary(app, _service(request))
+
+
+@router.post("/applications/{application_id}/digilocker/{slot}")
+def fetch_from_digilocker(
+    application_id: str,
+    slot: DocSlot,
+    body: DigiLockerAnswer,
+    request: Request,
+    db: Db,
+    principal: KycPrincipal,
+) -> dict[str, Any]:
+    """The signatory's ID or the Udyam certificate, issuer-signed, without a photo.
+
+    422 ``DIGILOCKER_NOT_LINKED`` when the owner's DigiLocker doesn't hold it, 409
+    ``DIGILOCKER_DECLINED`` when they said no on DigiLocker's consent screen.
+    """
+    if slot not in DIGILOCKER_SLOTS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, {"code": "SLOT_NOT_SUPPORTED"})
+    app = _owned(db, principal, application_id)
+    outcome = _service(request).fetch_from_digilocker(db, app, slot, allow=body.allow)
+    if outcome is DigiLockerStatus.NOT_LINKED:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, {"code": "DIGILOCKER_NOT_LINKED"}
+        )
+    if outcome is DigiLockerStatus.CONSENT_DECLINED:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"code": "DIGILOCKER_DECLINED"})
     return _summary(app, _service(request))
 
 

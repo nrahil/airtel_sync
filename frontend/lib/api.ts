@@ -283,7 +283,9 @@ export interface Order {
   amount_due_now_paise: number;
   lines: { product_id: string; product_name: string; qty: number }[];
   kyc_status: string | null;
-  next_action: "KYC" | "FIX_KYC" | "PAY" | "RETRY_PAYMENT" | "CHOOSE_ALTERNATIVE" | "NONE";
+  next_action: "KYC" | "FIX_KYC" | "SIGN" | "PAY" | "RETRY_PAYMENT" | "CHOOSE_ALTERNATIVE" | "NONE";
+  /** The signed order form (mock Aadhaar e-sign); payment needs it. */
+  esign?: { signed_at: string; document_sha256: string } | null;
   payments: Payment[];
   created_at?: string;
   tracker?: Tracker;
@@ -510,12 +512,14 @@ export interface KycFix {
   message: string;
 }
 
+export type DocSource = "OCR" | "MANUAL" | "LOOKUP" | "DIGILOCKER";
+
 export interface KycApplication {
   application_id: string;
   status: KycStatus;
   failed_attempts: number;
   handed_off: boolean;
-  documents: { slot: DocSlot; source: "OCR" | "MANUAL" | "LOOKUP"; uploaded_at: string }[];
+  documents: { slot: DocSlot; source: DocSource; uploaded_at: string }[];
   verdict: {
     decision: Exclude<KycStatus, "DRAFT">;
     review_required: boolean;
@@ -625,6 +629,24 @@ export function submitKyc(applicationId: string, locale: string): Promise<KycApp
   );
 }
 
+/**
+ * The signatory's ID or the Udyam certificate from DigiLocker (mock), issuer-signed, no photo.
+ * `allow` is the owner's answer on DigiLocker's consent screen. Rejects with
+ * ApiError(422, DIGILOCKER_NOT_LINKED) or ApiError(409, DIGILOCKER_DECLINED).
+ */
+export function fetchFromDigilocker(
+  applicationId: string,
+  slot: "SIGNATORY_ID" | "UDYAM_CERTIFICATE",
+  allow: boolean,
+): Promise<KycApplication> {
+  return call(
+    "POST",
+    `/api/v1/kyc/applications/${enc(applicationId)}/digilocker/${slot}`,
+    { allow },
+    { auth: true },
+  );
+}
+
 /** N2 fallback: type the GSTIN / Udyam number; a person always reviews it. */
 export function manualEntry(applicationId: string, slot: DocSlot, value: string): Promise<KycApplication> {
   return call(
@@ -633,4 +655,77 @@ export function manualEntry(applicationId: string, slot: DocSlot, value: string)
     { value },
     { auth: true },
   );
+}
+
+// ------------------------------------------------------------------ e-sign
+
+export interface EsignStart {
+  request_id: string;
+  status: "PENDING" | "SIGNED";
+  document_sha256: string;
+  form: {
+    order_id: string;
+    contract_months: number;
+    monthly_total_paise: number;
+    setup_total_paise: number;
+    lines: { product: string; qty: number }[];
+  };
+  expires_at: string;
+  /** Demo only: there is no real Aadhaar OTP. */
+  dev_code?: string;
+}
+
+/** The order form to sign, and a code "sent to the Aadhaar-linked mobile" (mock). */
+export function startEsign(orderId: string): Promise<EsignStart> {
+  return call("POST", `/api/v1/orders/${enc(orderId)}/esign`, undefined, { auth: true });
+}
+
+/** Rejects with ApiError(400, ESIGN_CODE_WRONG, attempts_left) / (409, ESIGN_EXPIRED | ESIGN_REQUEST_CLOSED). */
+export function confirmEsign(orderId: string, requestId: string, code: string): Promise<Order> {
+  return call("POST", `/api/v1/orders/${enc(orderId)}/esign/${enc(requestId)}`, { code }, { auth: true });
+}
+
+// ------------------------------------------------------------------ privacy (DPDP rights)
+
+export interface PrivacySummary {
+  phone: string | null;
+  consents: Record<Purpose, { granted: boolean; at: string | null }>;
+  advisor_sessions: number;
+  orders: { order_id: string; state: OrderState; created_at: string; products: string[] }[];
+  kyc_applications: {
+    application_id: string;
+    status: string;
+    readable: boolean;
+    on_record: { contact_name: string | null; gstin: string | null; udyam_number: string | null } | null;
+    documents: {
+      slot: DocSlot;
+      source: DocSource;
+      uploaded_at: string;
+      image_retained: boolean;
+      image_delete_after: string | null;
+    }[];
+  }[];
+}
+
+/** What we hold about the signed-in owner, masked. */
+export function getPrivacySummary(): Promise<PrivacySummary> {
+  return call("GET", "/api/v1/privacy/summary", undefined, { auth: true });
+}
+
+/** Everything we hold, unmasked, as a JSON file to save. */
+export async function exportMyData(): Promise<Blob> {
+  const data = await call<unknown>("GET", "/api/v1/privacy/export", undefined, { auth: true });
+  return new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+}
+
+export function withdrawConsent(
+  purpose: Purpose,
+  locale: string,
+): Promise<{ purpose: Purpose; changed: boolean; deletion_scheduled_for: string | null }> {
+  return call("POST", "/api/v1/privacy/withdrawal", { purpose, locale }, { auth: true });
+}
+
+/** Rejects with ApiError(409, ERASURE_BLOCKED) while an install is booked or the service is live. */
+export function eraseMyData(locale: string): Promise<{ erased: true; orders_cancelled: string[] }> {
+  return call("POST", "/api/v1/privacy/erasure", { confirm: "ERASE", locale }, { auth: true });
 }

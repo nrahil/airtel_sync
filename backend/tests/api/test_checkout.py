@@ -620,9 +620,33 @@ def ordered(client: TestClient) -> tuple[dict[str, str], dict[str, Any]]:
     return headers, r.json()
 
 
+def esign(client: TestClient, headers: dict[str, str], order_id: str) -> Any:
+    """Sign the order form (mock Aadhaar OTP; the code is echoed outside production)."""
+    r = client.post(f"{ORDERS}/{order_id}/esign", headers=headers)
+    if r.status_code != 201:
+        return r
+    started = r.json()
+    if started["status"] == "SIGNED":
+        return r
+    return client.post(
+        f"{ORDERS}/{order_id}/esign/{started['request_id']}",
+        json={"code": started["dev_code"]},
+        headers=headers,
+    )
+
+
 def pay(
-    client: TestClient, headers: dict[str, str], order_id: str, k: dict[str, str], **body: Any
+    client: TestClient,
+    headers: dict[str, str],
+    order_id: str,
+    k: dict[str, str],
+    *,
+    sign: bool = True,
+    **body: Any,
 ) -> Any:
+    """Pay; by default the order form is e-signed first once KYC has passed (Phase 3)."""
+    if sign:
+        esign(client, headers, order_id)
     return client.post(f"{ORDERS}/{order_id}/payments", json=body, headers={**headers, **k})
 
 
@@ -636,9 +660,10 @@ def test_payment_waits_for_kyc(client: TestClient) -> None:
 def test_n4_tr_04_failed_payment_is_retryable_and_replays_are_safe(client: TestClient) -> None:
     headers, order = ordered(client)
     kyc_passed(client, headers)
-    assert (
-        client.get(f"{ORDERS}/{order['order_id']}", headers=headers).json()["next_action"] == "PAY"
-    )
+    url = f"{ORDERS}/{order['order_id']}"
+    assert client.get(url, headers=headers).json()["next_action"] == "SIGN"
+    esign(client, headers, order["order_id"])
+    assert client.get(url, headers=headers).json()["next_action"] == "PAY"
 
     k1 = key()
     r = pay(client, headers, order["order_id"], k1, method="card", simulate="failure")

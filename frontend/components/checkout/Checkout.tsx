@@ -5,10 +5,12 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { ConsentForm } from "@/components/checkout/ConsentForm";
+import { EsignStep } from "@/components/checkout/EsignStep";
 import { OtpStep } from "@/components/checkout/OtpStep";
 import { JourneySteps } from "@/components/JourneySteps";
 import {
   ApiError,
+  askForHelp,
   type ConsentState,
   type Order,
   type PaymentMethod,
@@ -23,7 +25,7 @@ import {
   setToken,
 } from "@/lib/api";
 import { formatPaise } from "@/lib/format";
-import { type Locale, type Messages, fill } from "@/lib/i18n";
+import { type Locale, type Messages, bcp47, fill } from "@/lib/i18n";
 
 type Step = "loading" | "otp" | "consent" | "confirm" | "order";
 
@@ -42,6 +44,10 @@ export function Checkout({ locale, t }: { locale: Locale; t: Messages }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [lastPayment, setLastPayment] = useState<"FAILED" | "SUCCEEDED" | null>(null);
+  // Said no to KYC: a call back (a person arranges a visit) is still a way forward.
+  const [callback, setCallback] = useState(false);
+  // Shown only after the owner saved their choices without KYC, never before.
+  const [declinedKyc, setDeclinedKyc] = useState(false);
 
   const explain = useCallback(
     (e: unknown): string => {
@@ -110,6 +116,19 @@ export function Checkout({ locale, t }: { locale: Locale; t: Messages }) {
       setStep("order");
     } catch (e) {
       if (e instanceof ApiError && e.code === "CONSENT_REQUIRED") setStep("consent");
+      setProblem(explain(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const callMe = async (sessionId: string) => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await askForHelp(sessionId, "callback");
+      setCallback(true);
+    } catch (e) {
       setProblem(explain(e));
     } finally {
       setBusy(false);
@@ -201,6 +220,7 @@ export function Checkout({ locale, t }: { locale: Locale; t: Messages }) {
           current={consent}
           onSaved={(state) => {
             setConsent(state);
+            setDeclinedKyc(!state.purposes.KYC_VERIFICATION.granted);
             if (state.ready_for_checkout) {
               setProblem(null);
               setStep("confirm");
@@ -208,6 +228,30 @@ export function Checkout({ locale, t }: { locale: Locale; t: Messages }) {
           }}
         />
       )}
+      {step === "consent" && declinedKyc && quote && (
+        <section
+          data-testid="no-kyc-help"
+          className="flex flex-col gap-1 rounded-xl bg-neutral-100 p-3 text-sm dark:bg-neutral-800"
+        >
+          <p className="font-medium">{t.checkout.noKycTitle}</p>
+          <p className="text-neutral-600 dark:text-neutral-300">{t.checkout.noKycBody}</p>
+          {callback ? (
+            <p role="status" data-testid="no-kyc-called">
+              {t.advisor.help.callDone}
+            </p>
+          ) : (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void callMe(quote.session_id)}
+              className="self-start font-medium text-red-700 underline disabled:opacity-50"
+            >
+              {t.advisor.help.callMe}
+            </button>
+          )}
+        </section>
+      )}
+
       {step === "confirm" && (
         <button
           type="button"
@@ -248,8 +292,25 @@ export function Checkout({ locale, t }: { locale: Locale; t: Messages }) {
             </div>
           )}
 
+          {order.next_action === "SIGN" && (
+            <>
+              <p className="text-sm">{t.checkout.signNext}</p>
+              <EsignStep order={order} t={t} onSigned={setOrder} />
+            </>
+          )}
+
           {(order.next_action === "PAY" || order.next_action === "RETRY_PAYMENT") && (
             <div className="flex flex-col gap-3">
+              {order.esign && (
+                <p className="text-sm text-green-800 dark:text-green-200" data-testid="esigned">
+                  ✓{" "}
+                  {fill(t.checkout.signed, {
+                    date: new Intl.DateTimeFormat(bcp47(locale), { dateStyle: "medium", timeStyle: "short" }).format(
+                      new Date(order.esign.signed_at),
+                    ),
+                  })}
+                </p>
+              )}
               {lastPayment === "FAILED" && (
                 <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950 dark:text-red-100">
                   {t.checkout.paymentFailed}

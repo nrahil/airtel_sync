@@ -421,11 +421,13 @@ class _Evaluator:
                 slot=slot,
                 evidence=ev,
             )
-        elif doc.source is Source.LOOKUP:
+        elif doc.source in (Source.LOOKUP, Source.DIGILOCKER):
             self.out.add(
                 "udyam.number",
                 CheckStatus.PASS,
-                KycReason.UDYAM_VERIFIED_BY_LOOKUP,
+                KycReason.FETCHED_FROM_DIGILOCKER
+                if doc.source is Source.DIGILOCKER
+                else KycReason.UDYAM_VERIFIED_BY_LOOKUP,
                 slot=slot,
                 evidence=ev,
             )
@@ -479,7 +481,17 @@ class _Evaluator:
         doc = self.usable(slot)
         if doc is None:
             return
-        got = self.field(doc, "valid_till")
+        if doc.source is Source.DIGILOCKER:
+            # Issuer-signed (UIDAI): genuine and current by construction, no expiry to read.
+            self.out.add(
+                "signatory.digilocker",
+                CheckStatus.PASS,
+                KycReason.FETCHED_FROM_DIGILOCKER,
+                slot=slot,
+            )
+            got = None
+        else:
+            got = self.field(doc, "valid_till")
         if got is not None:
             text, conf = got
             valid_till = parse_date(text)

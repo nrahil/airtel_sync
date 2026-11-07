@@ -24,8 +24,15 @@ from typing import Any, Final
 
 from sqlalchemy.orm import Session, object_session
 
+from app.audit.log import AuditLog
 from app.config import Clock
 from app.db.models import KycApplication, KycDocument, KycStatus, ReviewKind
+from app.kyc.adapters import (
+    DIGILOCKER_SLOTS,
+    DigiLockerAdapter,
+    DigiLockerStatus,
+    MockDigiLocker,
+)
 from app.kyc.crosscheck import evaluate
 from app.kyc.extract import extract_document
 from app.kyc.ocr import OcrEngine, OcrUnavailableError
@@ -86,6 +93,7 @@ class KycService:
         faults: FaultInjector,
         clock: Clock,
         handoff_after: int,
+        digilocker: DigiLockerAdapter | None = None,
     ) -> None:
         self.blobs = blobs
         self.vault = vault
@@ -94,6 +102,7 @@ class KycService:
         self.faults = faults
         self.clock = clock
         self.handoff_after = handoff_after
+        self.digilocker: DigiLockerAdapter = digilocker or MockDigiLocker()
 
     # -------------------------------------------------------------- sealing
 
@@ -234,6 +243,29 @@ class KycService:
                 slot=DocSlot.GST_CERTIFICATE, source=Source.LOOKUP, identifier_reads=(number,)
             ),
         )
+
+    def fetch_from_digilocker(
+        self, db: Session, app: KycApplication, slot: DocSlot, *, allow: bool
+    ) -> DigiLockerStatus:
+        """Fetch the signatory's ID or the Udyam certificate from DigiLocker (no photo).
+
+        ``allow`` is the owner's answer on DigiLocker's own consent screen. Either way
+        the outcome is audited (never the document's contents).
+        """
+        if slot not in DIGILOCKER_SLOTS:
+            raise ManualEntryNotAllowedError(slot)
+        result = self.digilocker.fetch(slot, ctx=self.context(app), consent_granted=allow)
+        if result.extraction is not None:
+            self._store(db, app, result.extraction)
+        AuditLog(db, self.clock).append(
+            actor=app.principal_token,
+            action=f"KYC_DIGILOCKER_{result.status.value}",
+            entity_type="kyc_application",
+            entity_id=app.id,
+            detail={"slot": slot.value},
+        )
+        db.commit()
+        return result.status
 
     def request_visit(self, db: Session, app: KycApplication) -> None:
         """The owner would rather someone visits and collects the documents (J7, early)."""

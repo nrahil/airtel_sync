@@ -36,6 +36,9 @@ export function Landing({ locale, t }: { locale: Locale; t: Messages }) {
           {l.track}
         </Link>
       </div>
+      <Link href={`/${locale}/privacy`} data-testid="my-data" className="self-center text-sm text-neutral-600 underline dark:text-neutral-300">
+        {t.privacy.link}
+      </Link>
       <section className="flex flex-col gap-1">
         <h2 className="text-sm font-medium text-neutral-600 dark:text-neutral-300">{l.language}</h2>
         <LanguagePicker current={locale} autoNote={l.autoPicked} />

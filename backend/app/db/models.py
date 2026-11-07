@@ -285,6 +285,28 @@ class QuoteShare(Base):
     quote: Mapped[Quote] = relationship()
 
 
+class EsignRequest(Base):
+    """Mock Aadhaar e-sign of one order form (replaces a paper signature).
+
+    ``document_sha256`` is the hash of the exact order form shown to the owner; once
+    ``status`` is SIGNED it is the order's signature. Only an HMAC of the one-time code
+    is stored, and a request locks after a few wrong codes.
+    """
+
+    __tablename__ = "esign_requests"
+    __table_args__ = (CheckConstraint("attempts >= 0", name="ck_esign_attempts"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"), index=True)
+    document_sha256: Mapped[str] = mapped_column(String(HASH_LEN))
+    code_hmac: Mapped[str] = mapped_column(String(HASH_LEN))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="PENDING")
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    expires_at: Mapped[datetime]
+    signed_at: Mapped[datetime | None]
+
+
 class Order(Base):
     """Checkout result. Access needs the unguessable id *and* the owning principal.
 

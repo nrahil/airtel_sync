@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { ApiError, type ConsentState, PURPOSES, type Purpose, submitConsents } from "@/lib/api";
@@ -30,18 +31,23 @@ export function ConsentForm({
   }));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // A newer notice was published since this page loaded: show it before asking again.
+  const [outdated, setOutdated] = useState(false);
   const missingRequired = REQUIRED.some((p) => !choices[p]);
 
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setMessage(null);
+    setOutdated(false);
     try {
       const state = await submitConsents(t.consent.noticeVersion, locale, choices);
       setMessage(t.consent.saved);
       onSaved(state);
     } catch (e) {
-      setMessage(e instanceof ApiError && e.code === "NOTICE_OUTDATED" ? t.consent.outdated : t.advisor.error);
+      const old = e instanceof ApiError && e.code === "NOTICE_OUTDATED";
+      setOutdated(old);
+      setMessage(old ? t.consent.outdated : t.advisor.error);
     } finally {
       setBusy(false);
     }
@@ -75,6 +81,9 @@ export function ConsentForm({
                 </span>
               </span>
               <span className="text-sm text-neutral-600 dark:text-neutral-300">{t.consent[purpose].body}</span>
+              <span className="text-xs text-neutral-500" data-testid={`keep-${purpose}`}>
+                {t.consent[purpose].keep}
+              </span>
             </span>
           </label>
         ))}
@@ -95,6 +104,10 @@ export function ConsentForm({
         ))}
       </dl>
 
+      <Link href={`/${locale}/privacy`} data-testid="consent-my-data" className="self-start text-sm underline">
+        {t.consent.myData}
+      </Link>
+
       {missingRequired && <p className="text-sm text-neutral-600 dark:text-neutral-300">{t.consent.needRequired}</p>}
       <button type="submit" disabled={busy} className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50">
         {t.consent.save}
@@ -103,6 +116,16 @@ export function ConsentForm({
         <p role="status" className="text-sm">
           {message}
         </p>
+      )}
+      {outdated && (
+        <button
+          type="button"
+          data-testid="consent-reload"
+          onClick={() => window.location.reload()}
+          className="self-start rounded-lg px-3 py-2 text-sm font-medium ring-1 ring-neutral-300 dark:ring-neutral-600"
+        >
+          {t.consent.reload}
+        </button>
       )}
     </form>
   );

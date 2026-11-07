@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import _enforce, authenticate, client_ip, get_db
 from app.api.v1.advisor import advisor
+from app.checkout.esign import EsignService
 from app.checkout.orders import MockPaymentGateway, OrderService
 from app.checkout.quotes import QuoteService, SessionNotQuotableError, session_profile
 from app.config import Clock, get_clock
@@ -73,7 +74,8 @@ def checkout_services(request: Request) -> OrderService:
                 quotes = QuoteService(adv.catalogue, adv.policy, get_quote_signer())
                 gateway = MockPaymentGateway(state.settings.payment_failure_rate)
                 tracker = TrackerService(adv.catalogue, state.notifier)
-                service = OrderService(quotes, gateway, tracker)
+                esign = EsignService(state.otp_service.keys)
+                service = OrderService(quotes, gateway, tracker, esign)
                 state.order_service = service
     return service
 

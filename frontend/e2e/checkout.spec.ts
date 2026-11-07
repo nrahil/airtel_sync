@@ -48,7 +48,7 @@ function order(overrides: Record<string, unknown> = {}) {
 }
 
 const notGranted = {
-  notice_version: "2026-11-04.1",
+  notice_version: "2026-11-07.1",
   purposes: {
     NEEDS_ASSESSMENT: { granted: false, required: true },
     KYC_VERIFICATION: { granted: false, required: true },
@@ -151,7 +151,7 @@ test("OTP → consent (nothing pre-ticked) → order → failed payment → retr
   await form.getByRole("checkbox", { name: /Business verification/ }).check();
   await form.getByRole("button", { name: "Save my choices" }).click();
   expect(seen.consents.at(-1)).toEqual({
-    notice_version: "2026-11-04.1",
+    notice_version: "2026-11-07.1",
     locale: "en",
     choices: { NEEDS_ASSESSMENT: true, KYC_VERIFICATION: true, MARKETING: false },
   });

@@ -146,7 +146,19 @@ def test_e2e_01_hindi_journey_from_advisor_to_live_service(client: TestClient) -
     assert verdict["status"] == "PASS", verdict["verdict"]
     order = ok(client.get(f"{ORDERS}/{order['order_id']}", headers=headers))
     assert order["state"] == "KYC_VERIFIED"
+    assert order["next_action"] == "SIGN"
+
+    # e-sign the order form (mock Aadhaar OTP), then pay.
+    started = ok(client.post(f"{ORDERS}/{order['order_id']}/esign", headers=headers), 201)
+    order = ok(
+        client.post(
+            f"{ORDERS}/{order['order_id']}/esign/{started['request_id']}",
+            json={"code": started["dev_code"]},
+            headers=headers,
+        )
+    )
     assert order["next_action"] == "PAY"
+    assert order["esign"]["document_sha256"] == started["document_sha256"]
 
     # Pay setup + first month, then operations move the install to activation.
     paid = ok(
@@ -186,7 +198,7 @@ def test_e2e_02_k11_stale_bill_gets_a_precise_hindi_fix_and_blocks_payment(
     assert verdict["status"] == "FAIL"
     fix = next(f for f in verdict["verdict"]["fixes"] if f["reason"] == "ADDRESS_PROOF_STALE")
     assert fix["slot"] == "ADDRESS_PROOF"
-    assert "16 Apr 2026" in fix["message"]
+    assert "16 अप्रैल 2026" in fix["message"]
     assert "बिल" in fix["message"]
     # Nothing personal comes back in the clear.
     ctx = GOLDEN["specimens"]["K11"]["context"]

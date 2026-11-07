@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import authenticated, get_db, guarded, require_idempotency_key
 from app.api.v1.quotes import checkout_services
+from app.checkout.esign import EsignError, order_form
 from app.checkout.orders import (
     CheckoutError,
     OrderService,
@@ -39,7 +40,7 @@ from app.checkout.orders import (
     payment_view,
 )
 from app.config import Clock, get_clock
-from app.db.models import ConsentPurpose, Order, OrderState
+from app.db.models import ConsentPurpose, KycStatus, Order, OrderState
 from app.orders.service import TrackerError
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -63,6 +64,12 @@ class Fulfil(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     state: OrderState
+
+
+class EsignCode(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: Annotated[str, Field(pattern=r"^\s*\d{6}\s*$")]
 
 
 class Pay(BaseModel):
@@ -184,6 +191,52 @@ def fulfil(
         services.tracker.fulfil(db, clock, order, body.state)
     except TrackerError as exc:
         raise _fail(exc) from None
+    return _view(request, db, clock, services, order)
+
+
+@router.post("/{order_id}/esign", status_code=status.HTTP_201_CREATED)
+def start_esign(
+    order_id: str,
+    request: Request,
+    db: Db,
+    clock: ClockDep,
+    services: Services,
+    principal: Consented,
+) -> dict[str, Any]:
+    """The order form to sign, and a one-time code to the Aadhaar-linked mobile (mock)."""
+    order = _owned(db, principal, order_id)
+    kyc = services.kyc_application(db, order)
+    if kyc is None or kyc.status is not KycStatus.PASS:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"code": "KYC_NOT_VERIFIED"})
+    started = services.esign.start(db, clock, order)
+    body: dict[str, Any] = {
+        "request_id": started.request.id,
+        "status": started.request.status,
+        "document_sha256": started.request.document_sha256,
+        "form": order_form(order),
+        "expires_at": started.request.expires_at.isoformat(),
+    }
+    if started.code is not None and _demo(request):
+        body["dev_code"] = started.code  # demo only: there is no real Aadhaar OTP
+    return body
+
+
+@router.post("/{order_id}/esign/{request_id}")
+def confirm_esign(
+    order_id: str,
+    request_id: str,
+    body: EsignCode,
+    request: Request,
+    db: Db,
+    clock: ClockDep,
+    services: Services,
+    principal: Consented,
+) -> dict[str, Any]:
+    order = _owned(db, principal, order_id)
+    try:
+        services.esign.confirm(db, clock, order, request_id, body.code)
+    except EsignError as exc:
+        raise HTTPException(exc.status, {"code": exc.code, **exc.extra}) from None
     return _view(request, db, clock, services, order)
 
 

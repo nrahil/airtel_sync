@@ -10,9 +10,16 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Protocol
+from typing import Final, Protocol
 
-from app.kyc.types import DocSlot, Extraction, Source
+from app.kyc.types import (
+    VALIDATED_CONFIDENCE,
+    ApplicationContext,
+    DocSlot,
+    Extraction,
+    FieldValue,
+    Source,
+)
 
 
 class DigiLockerStatus(StrEnum):
@@ -28,30 +35,45 @@ class DigiLockerResult:
 
 
 class DigiLockerAdapter(Protocol):
-    def fetch(self, slot: DocSlot, *, identifier: str, consent_granted: bool) -> DigiLockerResult:
-        """Fetch an issuer-signed document; issuer data needs no OCR."""
+    def fetch(
+        self, slot: DocSlot, *, ctx: ApplicationContext, consent_granted: bool
+    ) -> DigiLockerResult:
+        """Fetch an issuer-signed document from the applicant's own DigiLocker; no OCR."""
         ...
+
+
+DIGILOCKER_SLOTS: Final = frozenset({DocSlot.SIGNATORY_ID, DocSlot.UDYAM_CERTIFICATE})
 
 
 @dataclass
 class MockDigiLocker:
-    """Documents 'linked' for a set of identifiers; everything else is NOT_LINKED."""
+    """The applicant's DigiLocker, as a demo.
 
-    linked: set[str] = field(default_factory=set)
+    A real fetch signs in to DigiLocker (Aadhaar OTP) and returns the issuer's signed
+    document. The mock holds an Aadhaar in the name the owner gave on record, and a
+    Udyam certificate for the Udyam number on record; nothing else is linked. Only the
+    name is kept from the ID: no Aadhaar number is ever read or stored.
+    """
 
-    def fetch(self, slot: DocSlot, *, identifier: str, consent_granted: bool) -> DigiLockerResult:
+    def fetch(
+        self, slot: DocSlot, *, ctx: ApplicationContext, consent_granted: bool
+    ) -> DigiLockerResult:
         if not consent_granted:
             return DigiLockerResult(DigiLockerStatus.CONSENT_DECLINED)
-        if identifier not in self.linked or slot not in (
-            DocSlot.GST_CERTIFICATE,
-            DocSlot.UDYAM_CERTIFICATE,
-        ):
-            return DigiLockerResult(DigiLockerStatus.NOT_LINKED)
-        # Issuer-signed: treat like a registry lookup of that identifier.
-        return DigiLockerResult(
-            DigiLockerStatus.FETCHED,
-            Extraction(slot=slot, source=Source.LOOKUP, identifier_reads=(identifier,)),
-        )
+        if slot is DocSlot.SIGNATORY_ID and ctx.contact_name:
+            name = FieldValue(text=ctx.contact_name, confidence=VALIDATED_CONFIDENCE)
+            return DigiLockerResult(
+                DigiLockerStatus.FETCHED,
+                Extraction(slot=slot, source=Source.DIGILOCKER, fields={"name": name}),
+            )
+        if slot is DocSlot.UDYAM_CERTIFICATE and ctx.udyam_on_record:
+            return DigiLockerResult(
+                DigiLockerStatus.FETCHED,
+                Extraction(
+                    slot=slot, source=Source.DIGILOCKER, identifier_reads=(ctx.udyam_on_record,)
+                ),
+            )
+        return DigiLockerResult(DigiLockerStatus.NOT_LINKED)
 
 
 class ESignStatus(StrEnum):

@@ -560,7 +560,7 @@ def test_messages_localise_and_fall_back() -> None:
         "Your electricity bill is dated 31 Oct 2025, more than 90 days ago. "
         "Please upload a bill dated on or after 16 Apr 2026."
     )
-    assert "16 Apr 2026" in (fix_message(stale, "hi") or "")
+    assert "16 अप्रैल 2026" in (fix_message(stale, "hi") or "")  # Hindi month names (Phase 3)
     assert fix_message(stale, "ta") == fix_message(stale)  # English fallback
     blurry = Check(
         check_id="q",
@@ -584,6 +584,7 @@ def test_every_reason_with_a_user_action_has_an_english_message() -> None:
         KycReason.UDYAM_OCR_CORRECTED,
         KycReason.UDYAM_VERIFIED_BY_LOOKUP,
         KycReason.GSTIN_VERIFIED_BY_LOOKUP,
+        KycReason.FETCHED_FROM_DIGILOCKER,
         KycReason.VISIT_REQUESTED,  # a back-office queue reason, never a fix
     }
     assert set(KycReason) - silent <= set(_EN)
@@ -593,3 +594,53 @@ def test_extraction_round_trips_as_json() -> None:
     """Extractions are sealed as JSON and re-evaluated later without re-running OCR."""
     doc = gst_doc()
     assert Extraction.model_validate_json(doc.model_dump_json()) == doc
+
+
+def test_every_english_fix_has_a_hindi_message_with_the_same_placeholders() -> None:
+    """Round 2 Phase 3: a Hindi owner never gets a KYC fix in English."""
+    import re
+
+    from app.kyc.messages import _EN, _HI
+
+    assert set(_EN) == set(_HI)
+    for reason, text in _EN.items():
+        assert set(re.findall(r"\{\w+\}", text)) == set(re.findall(r"\{\w+\}", _HI[reason])), reason
+
+
+def test_missing_or_expired_id_points_to_digilocker() -> None:
+    from app.kyc.messages import fix_message
+    from app.kyc.types import Check, CheckStatus
+
+    expired = Check(
+        check_id="signatory.valid_till",
+        status=CheckStatus.FAIL,
+        reason=KycReason.SIGNATORY_ID_EXPIRED,
+        slot=DocSlot.SIGNATORY_ID,
+        params={"valid_till": "2026-01-31"},
+    )
+    assert fix_message(expired, "en") == (
+        "The signatory ID expired on 31 Jan 2026. Please upload an ID that is still valid "
+        "— or fetch your Aadhaar from DigiLocker."
+    )
+    assert "DigiLocker" in (fix_message(expired, "hi") or "")
+
+
+def test_hindi_fix_messages_use_hindi_month_names() -> None:
+    from app.kyc.messages import fix_message
+    from app.kyc.types import Check, CheckStatus
+
+    stale = Check(
+        check_id="address.date",
+        status=CheckStatus.FAIL,
+        reason=KycReason.ADDRESS_PROOF_STALE,
+        slot=DocSlot.ADDRESS_PROOF,
+        params={"bill_date": "2025-10-31", "cutoff": "2026-04-16"},
+    )
+    assert fix_message(stale, "hi") == (
+        "आपका बिजली बिल 31 अक्टूबर 2025 का है, जो 90 दिन से पुराना है। "
+        "कृपया 16 अप्रैल 2026 या उसके बाद का बिल अपलोड करें।"
+    )
+    assert fix_message(stale, "en") == (
+        "Your electricity bill is dated 31 Oct 2025, more than 90 days ago. "
+        "Please upload a bill dated on or after 16 Apr 2026."
+    )
