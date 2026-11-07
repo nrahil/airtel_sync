@@ -208,3 +208,228 @@ test("quote screen renders in Hindi", async ({ page }) => {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   expect(overflow).toBe(false);
 });
+
+// ------------------------------------------------------------------ Round 2 Phase 2
+
+const STARTER_ITEMS = [
+  { product_id: "P04", qty: 1 },
+  { product_id: "P07", qty: 1 },
+  { product_id: "P19", qty: 1 },
+];
+
+/** The quote as the server now sends it: plans, deltas, contract prices, pay today. */
+function phase2Quote(id: string, extra: Record<string, unknown> = {}) {
+  const base = quote(id, BASE);
+  const deltas: Record<string, { monthly_total_paise: number; setup_total_paise: number } | null> = {
+    P01: null, // removing it would break Wi-Fi: the cascade, not a price
+    P07: { monthly_total_paise: -47082, setup_total_paise: 0 },
+    P22: { monthly_total_paise: -50062, setup_total_paise: -118000 },
+    P23: { monthly_total_paise: 35282, setup_total_paise: 212400 },
+  };
+  return {
+    ...base,
+    options: base.options.map((o) => ({ ...o, delta: deltas[o.product_id] ?? null })),
+    contract_prices: [
+      { months: 12, monthly_total_paise: base.totals.monthly_total_paise },
+      { months: 24, monthly_total_paise: base.totals.monthly_total_paise - 20621 },
+    ],
+    due_today_paise: base.totals.monthly_total_paise + base.totals.setup_total_paise,
+    plans: [
+      {
+        key: "starter",
+        items: STARTER_ITEMS,
+        products: [
+          { product_name: "Biz 5G AirFiber 100", qty: 1 },
+          { product_name: "Business Postpaid 299", qty: 1 },
+          { product_name: "Cloud POS & Billing", qty: 1 },
+        ],
+        monthly_total_paise: 282846,
+        setup_total_paise: 295000,
+        current: false,
+        changes: [
+          { kind: "swapped", from: "Biz Fibre 100", to: "Biz 5G AirFiber 100" },
+          { kind: "removed", product: "Secure Wi-Fi with Guest Network" },
+          { kind: "fewer", product: "Business Postpaid 299", from: 2, to: 1 },
+        ],
+      },
+      {
+        key: "recommended",
+        items: BASE.map((l) => ({ product_id: l.product_id, qty: l.qty })),
+        products: BASE.map((l) => ({ product_name: l.product_name, qty: l.qty })),
+        monthly_total_paise: base.totals.monthly_total_paise,
+        setup_total_paise: base.totals.setup_total_paise,
+        current: true,
+        changes: [],
+      },
+    ],
+    ...extra,
+  };
+}
+
+type Sent = { items: { product_id: string; qty: number }[]; contract_months?: number };
+
+async function mockPhase2(page: Page) {
+  const sent: Sent[] = [];
+  await page.route("**/api/v1/quotes/**", async (route) => {
+    const req = route.request();
+    if (req.method() === "GET") return route.fulfill({ json: phase2Quote("q-1") });
+    sent.push(req.postDataJSON() as Sent);
+    return route.fulfill({ json: phase2Quote("q-2") });
+  });
+  return sent;
+}
+
+test("Starter vs Recommended: both prices, what the starter gives up, one tap to switch", async ({ page }) => {
+  const sent = await mockPhase2(page);
+  await page.goto("/en/quote?q=q-1");
+  const plans = page.getByTestId("plans");
+  await expect(plans).toContainText("Want a lower monthly bill?");
+  await expect(page.getByTestId("plan-starter-price")).toHaveText("₹2,828/month");
+  await expect(page.getByTestId("plan-recommended")).toContainText("Your plan now");
+  const changes = page.getByTestId("plan-changes");
+  await expect(changes).toContainText("Biz 5G AirFiber 100 instead of Biz Fibre 100");
+  await expect(changes).toContainText("No Secure Wi-Fi with Guest Network");
+  await expect(changes).toContainText("Business Postpaid 299: 1 instead of 2");
+  await expect(page.locator("main")).not.toContainText(/\bP\d{2}\b/); // no product codes
+
+  await plans.getByRole("button", { name: "Switch to Starter" }).click();
+  await expect.poll(() => sent.at(-1)?.items).toEqual(STARTER_ITEMS);
+});
+
+test("each toggle shows the rupee change before you tap", async ({ page }) => {
+  await mockPhase2(page);
+  await page.goto("/en/quote?q=q-1");
+  await expect(page.getByTestId("option-P22").getByTestId("delta")).toHaveText("Remove: −₹500/month · −₹1,180 one-time");
+  await expect(page.getByTestId("option-P23").getByTestId("delta")).toHaveText("Add: +₹353/month · +₹2,124 one-time");
+  await expect(page.getByRole("button", { name: "Add Cloud CCTV (+₹353/month · +₹2,124 one-time)" })).toBeVisible();
+  // A removal the engine would refuse shows no price (tapping it opens the cascade).
+  await expect(page.getByTestId("option-P01").getByTestId("delta")).toHaveCount(0);
+});
+
+test("what you pay today vs from next month, with GST in plain words", async ({ page }) => {
+  await mockPhase2(page);
+  await page.goto("/en/quote?q=q-1");
+  const box = page.getByTestId("pay-box");
+  // Monthly ₹2,592 + setup ₹1,180 = ₹3,772 today.
+  await expect(box.getByTestId("pay-today")).toHaveText("₹3,772");
+  await expect(box).toContainText("setup ₹1,180 + first month ₹2,592");
+  await expect(box.getByTestId("pay-monthly")).toHaveText("₹2,592");
+  await expect(box).toContainText("each month, 12-month contract");
+  await expect(box.getByTestId("gst-plain")).toHaveText(
+    "All prices include GST, an 18% government tax (₹395 of your monthly bill).",
+  );
+});
+
+test("24 months says the saving in rupees and re-prices on tap", async ({ page }) => {
+  const sent = await mockPhase2(page);
+  await page.goto("/en/quote?q=q-1");
+  const contract = page.getByTestId("contract");
+  await expect(contract.getByRole("button", { name: /12 months/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("contract-saves-24")).toHaveText("save ₹206 a month");
+  await contract.getByRole("button", { name: /24 months/ }).click();
+  await expect.poll(() => sent.at(-1)?.contract_months).toBe(24);
+});
+
+const TOKEN = "tok_abcdefghijklmnopqrstuvwxyz012345";
+
+test("share: a WhatsApp link to a read-only page", async ({ page }) => {
+  await mockPhase2(page);
+  let shared = 0;
+  await page.route("**/api/v1/quotes/q-1/share", (route) => {
+    shared += 1;
+    return route.fulfill({ status: 201, json: { token: TOKEN, valid_until: "2099-01-01T10:00:00+05:30" } });
+  });
+  await page.goto("/en/quote?q=q-1");
+  await page.getByRole("button", { name: "Send this price to my partner or accountant" }).click();
+  await expect(page.getByTestId("share")).toContainText("They can see the price but can't change your plan.");
+  const url = await page.getByTestId("share-url").inputValue();
+  expect(url).toMatch(new RegExp(`/en/quote/shared\\?t=${TOKEN}$`));
+  const href = (await page.getByTestId("share-whatsapp").getAttribute("href")) ?? "";
+  expect(href.startsWith("https://wa.me/?text=")).toBe(true);
+  expect(decodeURIComponent(href.split("text=")[1])).toBe(
+    `Price for our business plan: ₹2,592/month. Details (view only): ${url}`,
+  );
+  expect(shared).toBe(1);
+});
+
+const SHARED = {
+  valid_until: "2099-01-01T10:00:00+05:30",
+  contract_months: 12,
+  lines: [
+    { product_name: "Biz Fibre 100", qty: 1, line_total_paise: 113905 },
+    { product_name: "Business Postpaid 299", qty: 2, line_total_paise: 75810 },
+  ],
+  totals: {
+    monthly_subtotal_paise: 189715,
+    monthly_gst_paise: 34149,
+    monthly_total_paise: 223864,
+    setup_total_paise: 0,
+    savings_paise: 0,
+  },
+  due_today_paise: 223864,
+  gst_rate_bps: 1800,
+};
+
+test("the shared page is read-only: prices, no buttons that change anything", async ({ page }) => {
+  await page.route("**/api/v1/quotes/shared/*", (route) => route.fulfill({ json: SHARED }));
+  await page.goto(`/en/quote/shared?t=${TOKEN}`);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Plan price (shared)");
+  await expect(page.getByTestId("shared-monthly-total")).toHaveText("₹2,239/month");
+  await expect(page.getByTestId("shared-quote")).toContainText("Business Postpaid 299 · Qty 2");
+  await expect(page.getByText(/View only/)).toBeVisible();
+  await expect(page.getByRole("button")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Find a plan for your own business" })).toHaveAttribute("href", "/en");
+  expect(await page.locator('meta[name="robots"]').getAttribute("content")).toContain("noindex");
+});
+
+test("a shared link that has ended says why and what to do", async ({ page }) => {
+  await page.route("**/api/v1/quotes/shared/*", (route) =>
+    route.fulfill({ status: 410, json: { detail: { code: "SHARE_ENDED", reason: "CHANGED" } } }),
+  );
+  await page.goto(`/hi/quote/shared?t=${TOKEN}`);
+  await expect(page.getByTestId("shared-problem")).toHaveText(
+    "यह कीमत वाला लिंक अब बंद हो गया है। मालिक ने यह प्लान बदल दिया है या ऑर्डर कर दिया है। उनसे नया लिंक भेजने को कहें।",
+  );
+});
+
+test("expired quote: 'Get today's price' says the price was refreshed and what it is", async ({ page }) => {
+  await page.route("**/api/v1/quotes/**", (route) =>
+    route.fulfill({ json: phase2Quote("q-1", { valid_until: "2020-01-01T00:00:00+05:30", expired: true }) }),
+  );
+  await page.route("**/api/v1/quotes", (route) => route.fulfill({ status: 201, json: phase2Quote("q-9") }));
+  await page.goto("/en/quote?q=q-1");
+  // While expired: no plan switch and no share (the price isn't held any more).
+  await expect(page.getByTestId("plans")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Send this price/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Get today's price" }).click();
+  await expect(page.getByTestId("refreshed")).toHaveText("Prices refreshed. Today's price is the same: ₹2,592/month.");
+  await expect(page.getByRole("button", { name: /Continue to checkout/ })).toBeEnabled();
+});
+
+test("Phase 2 quote screen in Hindi fits a phone", async ({ page }) => {
+  await mockPhase2(page);
+  await page.goto("/hi/quote?q=q-1");
+  await expect(page.getByTestId("plans")).toContainText("महीने का बिल कम करना है?");
+  await expect(page.getByTestId("pay-box")).toContainText("अगले महीने से");
+  await expect(page.getByTestId("contract-saves-24")).toHaveText("हर महीने ₹206 की बचत");
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+  expect(overflow).toBe(false);
+});
+
+test("walkthrough fixes: discount vs 24-month saving are named apart; setup says one-time once", async ({ page }) => {
+  await page.route("**/api/v1/quotes/**", (route) => {
+    const q = phase2Quote("q-1");
+    return route.fulfill({ json: { ...q, totals: { ...q.totals, savings_paise: 17475 } } });
+  });
+  await page.goto("/en/quote?q=q-1");
+  await expect(page.getByTestId("bundle-discount")).toHaveText("Bundle discount: ₹175 off every month");
+  await expect(page.getByTestId("contract-saves-24")).toHaveText("save ₹206 a month");
+  await expect(page.getByTestId("quote")).toContainText("One-time setup (incl. GST)");
+  await expect(page.getByTestId("quote")).not.toContainText("one-time, incl. GST");
+});
+
+test("walkthrough fix: the shared page says what 'Today' is made of", async ({ page }) => {
+  await page.route("**/api/v1/quotes/shared/*", (route) => route.fulfill({ json: SHARED }));
+  await page.goto(`/en/quote/shared?t=${TOKEN}`);
+  await expect(page.getByTestId("shared-quote")).toContainText("setup ₹0 + first month ₹2,239");
+});

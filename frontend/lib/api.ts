@@ -106,6 +106,24 @@ export interface ProductOption {
   requires_one_of: string[];
   requires_met: boolean;
   recommended: boolean;
+  /** What tapping Add/Remove does to the bill (engine-priced); null if the tap would be refused. */
+  delta?: { monthly_total_paise: number; setup_total_paise: number } | null;
+}
+
+export type PlanChange =
+  | { kind: "swapped"; from: string; to: string }
+  | { kind: "removed" | "added"; product: string }
+  | { kind: "fewer"; product: string; from: number; to: number };
+
+/** "Starter" vs "Recommended" (micro owners only); both priced by the engine. */
+export interface PlanChoice {
+  key: "starter" | "recommended";
+  items: ItemRef[];
+  products: { product_name: string; qty: number }[];
+  monthly_total_paise: number;
+  setup_total_paise: number;
+  current: boolean;
+  changes: PlanChange[];
 }
 
 export interface QuoteView {
@@ -134,6 +152,27 @@ export interface QuoteView {
   };
   gst_rate_bps: number;
   options: ProductOption[];
+  /** Monthly total of this bundle for each contract length on offer. */
+  contract_prices?: { months: number; monthly_total_paise: number }[];
+  plans?: PlanChoice[];
+  /** Charged at payment: one-time setup plus the first month. */
+  due_today_paise?: number;
+}
+
+/** A read-only shared quote: products and prices only. */
+export interface SharedQuote {
+  valid_until: string;
+  contract_months: number;
+  lines: { product_name: string; qty: number; line_total_paise: number }[];
+  totals: {
+    monthly_subtotal_paise: number;
+    monthly_gst_paise: number;
+    monthly_total_paise: number;
+    setup_total_paise: number;
+    savings_paise: number;
+  };
+  due_today_paise: number;
+  gst_rate_bps: number;
 }
 
 export type FixAction = "ADD" | "REPLACE" | "REMOVE" | "SET_QTY" | "REMOVE_BLOCKED";
@@ -367,6 +406,16 @@ export function createQuote(
 
 export function getQuote(quoteId: string): Promise<QuoteView> {
   return call("GET", `/api/v1/quotes/${enc(quoteId)}`, undefined, { auth: true });
+}
+
+/** A read-only link token for this quote; the link dies with the quote. */
+export function shareQuote(quoteId: string): Promise<{ token: string; valid_until: string }> {
+  return call("POST", `/api/v1/quotes/${enc(quoteId)}/share`);
+}
+
+/** Rejects with ApiError(410, SHARE_ENDED, reason EXPIRED | CHANGED) once the link has ended. */
+export function getSharedQuote(token: string): Promise<SharedQuote> {
+  return call("GET", `/api/v1/quotes/shared/${enc(token)}`);
 }
 
 /** Resolves with the new quote, or rejects with ApiError(422, Ineligible) for a cascade. */

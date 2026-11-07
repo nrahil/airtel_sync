@@ -268,6 +268,23 @@ class Quote(Base):
     session: Mapped[AdvisorSession] = relationship(back_populates="quotes")
 
 
+class QuoteShare(Base):
+    """A read-only link to one quote ("send this to my accountant").
+
+    The link carries a random token; only its SHA-256 is stored, and the shared view
+    never reveals the quote or session id (either of which would allow edits). The
+    link dies with the quote: when it expires, is replaced, or is ordered.
+    """
+
+    __tablename__ = "quote_shares"
+
+    token_hash: Mapped[str] = mapped_column(String(HASH_LEN), primary_key=True)
+    quote_id: Mapped[str] = mapped_column(ForeignKey("quotes.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+
+    quote: Mapped[Quote] = relationship()
+
+
 class Order(Base):
     """Checkout result. Access needs the unguessable id *and* the owning principal.
 

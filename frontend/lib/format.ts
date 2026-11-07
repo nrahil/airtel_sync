@@ -13,3 +13,11 @@ export function formatPaise(paise: number, locale = "en-IN"): string {
     numberingSystem: "latn",
   }).format(Math.round(paise / 100));
 }
+
+/**
+ * `to - from` in whole rupees, as the owner sees them on screen (each total rounded
+ * first). So "+₹353/month" next to a toggle always matches the two totals shown.
+ */
+export function rupeeDifference(fromPaise: number, toPaise: number): number {
+  return Math.round(toPaise / 100) - Math.round(fromPaise / 100);
+}

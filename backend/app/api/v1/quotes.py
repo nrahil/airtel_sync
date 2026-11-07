@@ -5,6 +5,10 @@
 the old one, or — if the bundle would be ineligible — returns 422
 ``BUNDLE_INELIGIBLE`` with localised reasons and one-tap fixes, leaving the current
 quote untouched. Once a quote is accepted into an order, only its owner can read it.
+
+``POST /quotes/{id}/share`` makes a read-only link ("send this to my accountant");
+``GET /quotes/shared/{token}`` shows prices and products only, and answers 410 once
+the quote has expired, been replaced, or been ordered.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from __future__ import annotations
 import threading
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -25,7 +29,7 @@ from app.config import Clock, get_clock
 from app.db.models import Order, QuoteStatus, SessionStatus
 from app.db.models import Quote as QuoteRow
 from app.domain.eligibility import MAX_QTY, Item
-from app.domain.quotes import IneligibleBundleError, get_quote_signer
+from app.domain.quotes import IneligibleBundleError, Quote, get_quote_signer
 from app.orders.service import TrackerService
 
 router = APIRouter(prefix="/quotes", tags=["quotes"])
@@ -183,3 +187,36 @@ def change_items(
         raise HTTPException(status.HTTP_409_CONFLICT, {"code": "QUOTE_NOT_EDITABLE"})
     new = _issue(services, db, clock, row.session_id, _items(body.items), body.contract_months, row)
     return _view(services, new, clock)
+
+
+@router.post("/{quote_id}/share", status_code=status.HTTP_201_CREATED)
+def share_quote(
+    quote_id: str, db: Db, clock: ClockDep, services: Services, _: Limited
+) -> dict[str, Any]:
+    row = db.get(QuoteRow, quote_id)
+    if row is None or row.status is QuoteStatus.ACCEPTED:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, {"code": "NOT_FOUND"})
+    if row.status is not QuoteStatus.ISSUED:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"code": "QUOTE_NOT_EDITABLE"})
+    valid_until = Quote.model_validate(row.payload).valid_until
+    if clock.now() >= valid_until:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"code": "QUOTE_EXPIRED"})
+    token = services.quotes.share(db, clock, row)
+    return {"token": token, "valid_until": valid_until.isoformat()}
+
+
+@router.get("/shared/{token}")
+def shared_quote(
+    token: Annotated[str, Path(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")],
+    db: Db,
+    clock: ClockDep,
+    services: Services,
+    _: Limited,
+) -> dict[str, Any]:
+    found = services.quotes.shared(db, token, clock.now())
+    if found is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, {"code": "NOT_FOUND"})
+    state, row = found
+    if state != "OK":
+        raise HTTPException(status.HTTP_410_GONE, {"code": "SHARE_ENDED", "reason": state})
+    return services.quotes.shared_view(row)

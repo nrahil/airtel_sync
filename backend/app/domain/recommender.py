@@ -249,6 +249,37 @@ class _Builder:
         )
 
 
+# "Lower my bill" for micro owners (the most price-sensitive group): the cheapest
+# eligible connection, one mobile line and the billing counter. No Wi-Fi add-on.
+STARTER_CONNECTIVITY: Final = ("P04", "P01")
+STARTER_CORE: Final = ("P07", "P19")
+
+
+def starter(profile: BusinessProfile, catalogue: Catalogue) -> list[Item] | None:
+    """The micro starter bundle, or ``None`` (not micro / nothing eligible).
+
+    One connection and one billing counter per location, and a single mobile line.
+
+    Prices still come from the pricing engine; this only picks products, all of
+    which must be eligible together.
+    """
+    if profile.segment is not Segment.MICRO:
+        return None
+    connections = sorted(
+        (p for p in STARTER_CONNECTIVITY if is_available(catalogue[p], profile)),
+        key=lambda p: (catalogue[p].price_max_inr_per_month, p),
+    )
+    if not connections:
+        return None
+    items = [Item.of(connections[0], default_qty(connections[0], profile))]
+    for pid in STARTER_CORE:
+        if is_available(catalogue[pid], profile):
+            items.append(Item.of(pid, 1 if pid == "P07" else default_qty(pid, profile)))
+    if not evaluate_bundle(items, profile, catalogue).is_valid:
+        return None
+    return items
+
+
 def recommend(profile: BusinessProfile, catalogue: Catalogue) -> Recommendation:
     template = TEMPLATES[profile.segment]
     b = _Builder(profile, catalogue)

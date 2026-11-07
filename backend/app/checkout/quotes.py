@@ -13,9 +13,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,7 +26,7 @@ from app.advisor import messages as msg
 from app.advisor.service import State, profile_from_slots
 from app.audit.log import AuditLog
 from app.config import Clock
-from app.db.models import AdvisorSession, QuoteStatus, SessionStatus
+from app.db.models import AdvisorSession, QuoteShare, QuoteStatus, SessionStatus
 from app.db.models import Quote as QuoteRow
 from app.domain.catalogue import Catalogue
 from app.domain.eligibility import (
@@ -37,7 +39,7 @@ from app.domain.eligibility import (
     is_available,
     product_reasons,
 )
-from app.domain.pricing import PAISE_PER_RUPEE, PricingPolicy
+from app.domain.pricing import PAISE_PER_RUPEE, PriceBreakdown, PricingPolicy, price_bundle
 from app.domain.profile import BusinessProfile
 from app.domain.quotes import (
     IneligibleBundleError,
@@ -46,7 +48,7 @@ from app.domain.quotes import (
     QuoteTamperedError,
     build_quote,
 )
-from app.domain.recommender import default_qty, recommend
+from app.domain.recommender import default_qty, recommend, starter
 
 ACTOR: Final = "advisor-session"
 
@@ -83,6 +85,27 @@ def apply_fix(items: Sequence[Item], fix: Fix) -> list[Item]:
 
 def _items_json(items: Sequence[Item]) -> list[dict[str, Any]]:
     return [{"product_id": i.product_id, "qty": i.qty} for i in items]
+
+
+def _same(a: Sequence[Item], b: Sequence[Item]) -> bool:
+    return sorted((i.product_id, i.qty) for i in a) == sorted((i.product_id, i.qty) for i in b)
+
+
+def requested_contract(quote: Quote) -> int | None:
+    """The contract the owner chose, or ``None`` if it is just the bundle's minimum.
+
+    The PWA sends the same rule back on every toggle, so prices previewed here match
+    the quote that the toggle then issues.
+    """
+    required = max(line.min_contract_months for line in quote.lines)
+    return quote.contract_months if quote.contract_months > required else None
+
+
+def _share_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("ascii")).hexdigest()
+
+
+ShareState = Literal["OK", "EXPIRED", "CHANGED"]
 
 
 class QuoteService:
@@ -286,6 +309,130 @@ class QuoteService:
                 return alt
         return None
 
+    def _price(self, items: Sequence[Item], contract: int | None) -> PriceBreakdown:
+        return price_bundle(items, self.catalogue, self.policy, contract_months=contract)
+
+    def _delta(
+        self,
+        items: Sequence[Item],
+        profile: BusinessProfile,
+        contract: int | None,
+        quote: Quote,
+    ) -> dict[str, int] | None:
+        if not items or not evaluate_bundle(items, profile, self.catalogue).is_valid:
+            return None
+        totals = self._price(items, contract).totals
+        return {
+            "monthly_total_paise": totals.monthly_total_paise - quote.monthly_total_paise,
+            "setup_total_paise": totals.setup_total_paise - quote.setup_total_paise,
+        }
+
+    def plans(
+        self, current: Sequence[Item], profile: BusinessProfile, contract: int | None
+    ) -> list[dict[str, Any]]:
+        """Starter vs Recommended for micro owners, both priced by the engine.
+
+        Empty unless a starter exists, both bundles are eligible and the starter is
+        actually cheaper. ``changes`` says what the starter gives up.
+        """
+        lite = starter(profile, self.catalogue)
+        full = self.default_items(profile)
+        if lite is None or _same(lite, full):
+            return []
+        bundles = {"starter": lite, "recommended": full}
+        if not all(evaluate_bundle(b, profile, self.catalogue).is_valid for b in bundles.values()):
+            return []
+        priced = {k: self._price(b, contract).totals for k, b in bundles.items()}
+        if priced["starter"].monthly_total_paise >= priced["recommended"].monthly_total_paise:
+            return []
+        return [
+            {
+                "key": key,
+                "items": _items_json(items),
+                "products": [
+                    {"product_name": self._name(i.product_id), "qty": i.qty} for i in items
+                ],
+                "monthly_total_paise": priced[key].monthly_total_paise,
+                "setup_total_paise": priced[key].setup_total_paise,
+                "current": _same(items, current),
+                "changes": self._gives_up(full, lite) if key == "starter" else [],
+            }
+            for key, items in bundles.items()
+        ]
+
+    def _gives_up(self, full: Sequence[Item], lite: Sequence[Item]) -> list[dict[str, Any]]:
+        """What moving from ``full`` to ``lite`` changes, in product names."""
+        before = {i.product_id: i.qty for i in full}
+        after = {i.product_id: i.qty for i in lite}
+        dropped = [p for p in before if p not in after]
+        changes: list[dict[str, Any]] = []
+        for new in (p for p in after if p not in before):
+            category = self.catalogue[new].category
+            old = next((p for p in dropped if self.catalogue[p].category is category), None)
+            if old is not None:
+                dropped.remove(old)
+                changes.append({"kind": "swapped", "from": self._name(old), "to": self._name(new)})
+            else:
+                changes.append({"kind": "added", "product": self._name(new)})
+        for pid in dropped:
+            changes.append({"kind": "removed", "product": self._name(pid)})
+        for pid, qty in after.items():
+            if pid in before and qty < before[pid]:
+                changes.append(
+                    {"kind": "fewer", "product": self._name(pid), "from": before[pid], "to": qty}
+                )
+        return changes
+
+    # -------------------------------------------------------------- sharing
+
+    def share(self, db: Session, clock: Clock, row: QuoteRow) -> str:
+        """A new read-only link token for ``row``. Only its hash is stored."""
+        token = secrets.token_urlsafe(24)
+        db.add(QuoteShare(token_hash=_share_hash(token), quote_id=row.id, created_at=clock.now()))
+        AuditLog(db, clock).append(
+            actor=ACTOR, action="QUOTE_SHARED", entity_type="quote", entity_id=row.id
+        )
+        db.commit()
+        return token
+
+    @staticmethod
+    def shared(db: Session, token: str, now: datetime) -> tuple[ShareState, QuoteRow] | None:
+        """The quote behind a share token, and whether the link still works."""
+        share = db.get(QuoteShare, _share_hash(token))
+        if share is None:
+            return None
+        row = share.quote
+        if row.status is not QuoteStatus.ISSUED:
+            return "CHANGED", row  # replaced by a newer version, or ordered
+        if now >= Quote.model_validate(row.payload).valid_until:
+            return "EXPIRED", row
+        return "OK", row
+
+    def shared_view(self, row: QuoteRow) -> dict[str, Any]:
+        """Read-only: products and prices only. No quote or session id, nothing editable."""
+        quote = Quote.model_validate(row.payload)
+        return {
+            "valid_until": quote.valid_until.isoformat(),
+            "contract_months": quote.contract_months,
+            "lines": [
+                {
+                    "product_name": line.product_name,
+                    "qty": line.qty,
+                    "line_total_paise": line.line_total_paise,
+                }
+                for line in quote.lines
+            ],
+            "totals": {
+                "monthly_subtotal_paise": quote.monthly_subtotal_paise,
+                "monthly_gst_paise": quote.monthly_gst_paise,
+                "monthly_total_paise": quote.monthly_total_paise,
+                "setup_total_paise": quote.setup_total_paise,
+                "savings_paise": quote.savings_paise,
+            },
+            "due_today_paise": quote.setup_total_paise + quote.monthly_total_paise,
+            "gst_rate_bps": self.policy.gst_rate_bps,
+        }
+
     def view(
         self, row: QuoteRow, profile: BusinessProfile, locale: str, now: datetime
     ) -> dict[str, Any]:
@@ -296,6 +443,8 @@ class QuoteService:
         qty_in = {line.product_id: line.qty for line in quote.lines}
         addons = {a.product_id for a in recommend(profile, self.catalogue).addons}
         required = max(line.min_contract_months for line in quote.lines)
+        items = quote.items()
+        contract = requested_contract(quote)
 
         options: list[dict[str, Any]] = []
         for product in self.catalogue:
@@ -322,8 +471,23 @@ class QuoteService:
                     "requires_one_of": list(deps),
                     "requires_met": not deps or bool(set(deps) & (present - {pid})),
                     "recommended": pid in addons,
+                    # What tapping Add/Remove does to the bill, priced by the engine
+                    # (bundle discounts can move too). ``None``: the tap would be refused.
+                    "delta": None
+                    if reasons
+                    else self._delta(
+                        [i for i in items if i.product_id != pid]
+                        if pid in present
+                        else [*items, Item.of(pid, qty_in.get(pid, default_qty(pid, profile)))],
+                        profile,
+                        contract,
+                        quote,
+                    ),
                 }
             )
+        contract_options = sorted(
+            {required, *(m for m in self.policy.contract_options if m >= required)}
+        )
         return {
             "quote_id": row.id,
             "session_id": row.session_id,
@@ -336,9 +500,19 @@ class QuoteService:
             "policy_version": quote.policy_version,
             "contract_months": quote.contract_months,
             "required_contract_months": required,
-            "contract_options": sorted(
-                {required, *(m for m in self.policy.contract_options if m >= required)}
-            ),
+            "contract_options": contract_options,
+            "contract_prices": [
+                {
+                    "months": m,
+                    "monthly_total_paise": self._price(
+                        items, None if m == required else m
+                    ).totals.monthly_total_paise,
+                }
+                for m in contract_options
+            ],
+            "plans": self.plans(items, profile, contract),
+            # Charged at payment: one-time setup plus the first month (OrderService).
+            "due_today_paise": quote.setup_total_paise + quote.monthly_total_paise,
             "lines": [line.model_dump(mode="json") for line in quote.lines],
             "totals": {
                 "list_monthly_paise": quote.list_monthly_paise,
