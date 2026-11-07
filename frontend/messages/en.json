@@ -8,6 +8,8 @@
     "send": "Send",
     "voice": "Speak",
     "listening": "Listening…",
+    "voiceBlocked": "The microphone is blocked. Allow it in your browser's site settings, or type instead.",
+    "voiceFailed": "Couldn't hear that. Try again, or type instead.",
     "useForm": "Answer with quick options instead",
     "next": "Next",
     "yes": "Yes",
@@ -42,7 +44,25 @@
       "textDone": "Sent! Open the link on your phone whenever you're ready.",
       "failed": "That didn't work. Please try again.",
       "cancel": "Cancel"
-    }
+    },
+    "timeLeft": "about 1 minute left",
+    "almostDone": "last question",
+    "editTitle": "Something not right? Change an answer:",
+    "editHint": "Or just type the change, e.g. “actually 6 staff”.",
+    "editPlaceholder": "Type a change…",
+    "editSlots": {
+      "segment": "Business type",
+      "city": "City",
+      "employee_count": "Staff",
+      "num_sites": "Locations"
+    },
+    "cancel": "Cancel",
+    "changedTitle": "What changed",
+    "changedTotal": "Monthly total: {from} → {to}",
+    "changedAdded": "Added: {name}",
+    "changedRemoved": "Removed: {name}",
+    "changedQty": "{name}: {from} → {to}",
+    "home": "Home"
   },
   "segment": {
     "micro": "Shop or local service",
@@ -307,5 +327,15 @@
     "documents": "Documents",
     "pay": "Pay",
     "step": "Step {step} of {total}"
+  },
+  "landing": {
+    "tagline": "Internet, SIMs, WhatsApp and billing for your shop — one bill, one number.",
+    "point1": "See your plan and monthly price in about 2 minutes",
+    "point2": "No salesperson needed — ask in your own language",
+    "point3": "Buy, verify your documents and track your order on your phone",
+    "start": "Start",
+    "track": "Already ordered? Track it",
+    "language": "Language",
+    "autoPicked": "Picked from your phone's language — tap another to change it."
   }
 }

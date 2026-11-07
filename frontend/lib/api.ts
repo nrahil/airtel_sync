@@ -54,6 +54,8 @@ export interface Recommendation {
   explanation: { text: string; source: "llm" | "template" };
   /** Optional extras (incl. what the owner asked for): priced once switched on in the quote. */
   addons?: { product_id: string; product_name?: string; qty: number; source: string }[];
+  /** One plain sentence per product (lines and extras): why it is in the plan. */
+  why?: Record<string, string>;
 }
 
 export interface TurnResponse {

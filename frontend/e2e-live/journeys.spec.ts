@@ -51,23 +51,20 @@ async function consentToRequired(page: Page, t: T) {
 
 async function answerAdvisor(page: Page, t: T, chat: string) {
   await page.getByLabel(t.advisor.placeholder).fill(chat);
-  await page.getByRole("button", { name: t.advisor.send }).click();
+  // exact: the help panel's "Text me a link…" button also contains the word "send".
+  await page.getByRole("button", { name: t.advisor.send, exact: true }).click();
   // Groq is unreachable: the advisor switches to the guided form and keeps going.
+  // Plan first: business type, city and staff are all it needs (fine-tuning is optional).
   await page.getByTestId("form-segment").getByRole("button", { name: t.segment.micro }).click();
   const city = page.getByTestId("form-city");
   await city.getByLabel(t.advisor.cityPlaceholder).fill("Surat"); // tier-2 city
   await city.getByRole("button", { name: t.advisor.next }).click();
-  for (const [slot, value] of [["employee_count", "4"], ["num_sites", "1"]] as const) {
-    const form = page.getByTestId(`form-${slot}`);
-    await form.getByLabel(t.advisor.numberPlaceholder).fill(value);
-    await form.getByRole("button", { name: t.advisor.next }).click();
-  }
-  await page.getByTestId("form-has_gstin").getByRole("button", { name: t.advisor.yes }).click();
-  await page.getByTestId("form-current_internet").getByRole("button", { name: t.internet.mobile_hotspot }).click();
-  const needs = page.getByTestId("form-needs");
-  for (const need of ["internet", "pos", "wifi"] as const) await needs.getByRole("button", { name: t.needs[need], exact: true }).click();
-  await needs.getByRole("button", { name: t.advisor.next }).click();
+  const staff = page.getByTestId("form-employee_count");
+  await staff.getByLabel(t.advisor.numberPlaceholder).fill("4");
+  await staff.getByRole("button", { name: t.advisor.next }).click();
   await expect(page.getByTestId("recommendation")).toBeVisible();
+  // Round 2 Phase 1: every line says why, in the owner's language, with Groq off.
+  await expect(page.getByTestId("why-P01")).not.toBeEmpty();
 }
 
 async function startKyc(page: Page, t: T, who: keyof typeof ON_RECORD) {

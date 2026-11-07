@@ -1,7 +1,9 @@
 """Groq chat-completions client (OpenAI-compatible API) with hard limits.
 
 * Timeout per call, **one** jittered retry on timeout / 429 / 5xx, then give up:
-  callers fall back to templates or the guided form (N1, LL-07).
+  callers fall back to templates or the guided form (N1, LL-07). A 429 waits as long
+  as Groq's ``Retry-After`` asks, up to :data:`RETRY_AFTER_CAP_SECONDS`; a longer
+  wait gives up at once, so the owner is never left staring at "Thinking…".
 * JSON mode: a model that fails to produce valid JSON gets HTTP 400
   ``json_validate_failed``. That is a bad *answer*, not an outage: retried once,
   then :class:`LlmBadOutputError` — callers re-ask instead of leaving chat.
@@ -25,6 +27,15 @@ log = logging.getLogger("udyam.advisor")
 
 RETRYABLE_STATUS: Final = frozenset({429, 500, 502, 503, 504})
 _RETRY_BASE_SECONDS: Final = 0.25
+RETRY_AFTER_CAP_SECONDS: Final = 4.0
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    """Seconds Groq asks us to wait (``Retry-After``), if it says."""
+    try:
+        return max(0.0, float(response.headers.get("retry-after", "")))
+    except ValueError:
+        return None
 
 
 class LlmUnavailableError(RuntimeError):
@@ -110,6 +121,7 @@ class GroqClient:
             payload["response_format"] = {"type": "json_object"}
 
         bad_output = False
+        wait: float | None = None
         for attempt in (1, 2):
             try:
                 response = await self._post(payload)
@@ -124,8 +136,14 @@ class GroqClient:
                     failure = "invalid JSON from model"
                 elif response.status_code not in RETRYABLE_STATUS:
                     break
+                elif response.status_code == 429:
+                    wait = _retry_after(response)
+                    if wait is not None and wait > RETRY_AFTER_CAP_SECONDS:
+                        break  # rate-limited for a while: fall back now, don't stall
             if attempt == 1:
                 delay = _RETRY_BASE_SECONDS * (1 + self._rng.random())
+                if wait is not None:
+                    delay = max(delay, wait)
                 log.warning("groq %s; retrying once in %.2fs", failure, delay)
                 await asyncio.sleep(delay)
         if bad_output:

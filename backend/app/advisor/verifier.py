@@ -29,6 +29,8 @@ MAX_EXPLANATION_CHARS: Final = 1200
 _PRODUCT_ID: Final = re.compile(r"\bP\d{2}\b", re.I)
 _NUMBER: Final = re.compile(r"\d[\d,]*(?:\.\d+)?")
 _FORBIDDEN: Final = re.compile(r"[<>]|https?://|www\.", re.I)
+# Internal codes ("GSTIN_REQUIRED") must never reach an owner (Round 2 Phase 1 walkthrough).
+_CODE: Final = re.compile(r"\b[A-Z]{2,}(?:_[A-Z]+)+\b")
 # A capitalised word inside a sentence looks like a name/brand ("Starlink"). It must be
 # part of a listed product, the business type, or this small vocabulary (LL-01).
 _PROPER: Final = re.compile(r"(?<=[^\s.!?:;।]\s)[A-Z][A-Za-z]+")
@@ -125,7 +127,7 @@ def verify_explanation(raw: str, facts: Facts, catalogue: Catalogue) -> str | No
     if not isinstance(text, str) or not text.strip() or len(text) > MAX_EXPLANATION_CHARS:
         return None
     text = text.strip()
-    if _FORBIDDEN.search(text):
+    if _FORBIDDEN.search(text) or _CODE.search(text):
         return None
     known_ids = {p.id for p in facts.products} | {b.id for b in facts.blocked}
     if any(pid.upper() not in known_ids for pid in _PRODUCT_ID.findall(text)):

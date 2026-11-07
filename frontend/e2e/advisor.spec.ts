@@ -199,7 +199,7 @@ test("plan first: progress, then the plan with its assumptions and an optional f
   });
   await page.goto("/en/advisor");
   await expect(page.getByTestId("journey-steps")).toHaveAttribute("data-step", "1");
-  await expect(page.getByTestId("progress")).toHaveText("Question 1 of 3");
+  await expect(page.getByTestId("progress")).toHaveText("Question 1 of 3 · about 1 minute left");
   await page.getByRole("button", { name: "Professional office" }).click();
 
   const assumed = page.getByTestId("assumed");
@@ -263,7 +263,7 @@ test("resume link (?s=) picks the session back up", async ({ page }) => {
   });
   await page.goto("/en/advisor?s=abc-123");
   await expect(page.getByTestId("transcript")).toContainText("Welcome back!");
-  await expect(page.getByTestId("progress")).toHaveText("Question 2 of 3");
+  await expect(page.getByTestId("progress")).toHaveText("Question 2 of 3 · about 1 minute left");
   expect(resumed).toBe(true);
   expect(new URL(page.url()).search).toBe("");
 });
@@ -311,4 +311,169 @@ test("the plan card lists the suggested extras by name", async ({ page }) => {
   await page.goto("/en/advisor");
   await expect(page.getByTestId("suggested-extras")).toContainText("Secure Wi-Fi with Guest Network");
   await expect(page.getByTestId("refine")).toHaveCount(0);
+});
+
+// ------------------------------------------------------------------ round 2, phase 1
+
+const why = {
+  P01: "Your main internet connection — one for each location (you have 1).",
+  P07: "You said 3 staff → 1 SIMs, one for every 3 people.",
+};
+
+test("every product on the plan says why it is there", async ({ page }) => {
+  await mockApi(page, () =>
+    turn({ locale: "en", status: "QUOTED", question: null, recommendation: { ...recommendation, why }, assumed: [] }),
+  );
+  await page.goto("/en/advisor");
+  for (const line of recommendation.pricing.lines) {
+    await expect(page.getByTestId(`why-${line.product_id}`)).toHaveText(why[line.product_id as keyof typeof why]);
+  }
+});
+
+test("progress on the last question says it is the last one", async ({ page }) => {
+  await mockApi(page, () =>
+    turn({
+      locale: "en",
+      mode: "form",
+      progress: { step: 3, total: 3 },
+      question: { slot: "employee_count", kind: "number", options: [], min: 1, max: 500 },
+    }),
+  );
+  await page.goto("/en/advisor");
+  await expect(page.getByTestId("progress")).toHaveText("Question 3 of 3 · last question");
+});
+
+const sixStaff = {
+  ...recommendation,
+  why,
+  pricing: {
+    ...recommendation.pricing,
+    lines: [
+      recommendation.pricing.lines[0],
+      { ...recommendation.pricing.lines[1], qty: 4, line_total_paise: 119600 },
+    ],
+    totals: { ...recommendation.pricing.totals, monthly_total_paise: 12415800 },
+  },
+};
+
+test("edit after the plan (typed): the plan updates and the change is highlighted", async ({ page }) => {
+  const sent: unknown[] = [];
+  await mockApi(page, (body) => {
+    sent.push(body);
+    if (body && "locale" in body) {
+      return turn({ locale: "en", status: "QUOTED", question: null, recommendation: { ...recommendation, why } });
+    }
+    return turn({
+      locale: "en",
+      status: "QUOTED",
+      question: null,
+      messages: [{ role: "assistant", kind: "notice", text: "I've updated your plan — the changes are highlighted below." }],
+      recommendation: sixStaff,
+    });
+  });
+  await page.goto("/en/advisor");
+  await expect(page.getByTestId("recommendation")).toBeVisible();
+  await expect(page.getByTestId("plan-changes")).toHaveCount(0);
+
+  await page.getByPlaceholder("Type a change…").fill("actually 6 staff");
+  await page.getByRole("button", { name: "Send" }).click();
+  expect(sent.at(-1)).toEqual({ text: "actually 6 staff" });
+
+  const changes = page.getByTestId("plan-changes");
+  await expect(changes).toContainText("Business Mobile Basic: 2 → 4");
+  await expect(changes).toContainText("Monthly total: ₹1,23,456 → ₹1,24,158");
+  await expect(page.getByTestId("line-P07")).toHaveAttribute("data-changed", "true");
+  await expect(page.getByTestId("line-P01")).not.toHaveAttribute("data-changed", "true");
+});
+
+test("edit after the plan (tapped, works with the guided form): change the staff count", async ({ page }) => {
+  const sent: unknown[] = [];
+  await mockApi(page, (body) => {
+    sent.push(body);
+    if (body && "locale" in body) {
+      return turn({ locale: "en", mode: "form", status: "QUOTED", question: null, recommendation });
+    }
+    return turn({ locale: "en", mode: "form", status: "QUOTED", question: null, recommendation: sixStaff });
+  });
+  await page.goto("/en/advisor");
+  // Guided form (Groq off): no free-text box, but every answer can still be changed.
+  await expect(page.getByPlaceholder("Type a change…")).toHaveCount(0);
+  await page.getByTestId("edit-employee_count").click();
+  await page.getByLabel("Enter a number").fill("6");
+  await page.getByRole("button", { name: "Next" }).click();
+  expect(sent.at(-1)).toEqual({ slot: "employee_count", value: 6 });
+  await expect(page.getByTestId("plan-changes")).toContainText("Business Mobile Basic: 2 → 4");
+  await expect(page.getByTestId("edit-employee_count")).toBeVisible(); // editor closed again
+});
+
+test("starts one session only (the greeting is never shown twice)", async ({ page }) => {
+  let starts = 0;
+  await mockApi(page, (body) => {
+    if (body && "locale" in body) {
+      starts += 1;
+      return turn({
+        locale: "en",
+        messages: [{ role: "assistant", kind: "notice", text: "Hello! A few quick questions." }],
+      });
+    }
+    return turn({ locale: "en" });
+  });
+  await page.goto("/en/advisor");
+  await expect(page.getByTestId("transcript").locator("li")).toHaveCount(1);
+  await page.waitForTimeout(500);
+  await expect(page.getByTestId("transcript").locator("li")).toHaveCount(1);
+  expect(starts).toBe(1);
+});
+
+/** A stand-in for the browser's speech recogniser: says `heard`, or fails with `error`. */
+async function fakeSpeech(page: Page, outcome: { heard?: string; error?: string }) {
+  await page.addInitScript((o) => {
+    class FakeRecognition {
+      lang = "";
+      interimResults = false;
+      maxAlternatives = 1;
+      onresult: ((e: unknown) => void) | null = null;
+      onend: (() => void) | null = null;
+      onerror: ((e: { error: string }) => void) | null = null;
+      start() {
+        (window as unknown as { __speechLang: string }).__speechLang = this.lang;
+        setTimeout(() => {
+          if (o.error) this.onerror?.({ error: o.error });
+          else this.onresult?.({ results: [[{ transcript: o.heard }]] });
+          this.onend?.();
+        }, 50);
+      }
+      stop() {
+        this.onend?.();
+      }
+    }
+    // Newer Chrome has the unprefixed name too; the app prefers it.
+    const w = window as unknown as { SpeechRecognition: unknown; webkitSpeechRecognition: unknown };
+    w.SpeechRecognition = FakeRecognition;
+    w.webkitSpeechRecognition = FakeRecognition;
+  }, outcome);
+}
+
+test("Speak: what the owner says lands in the box, in their language", async ({ page }) => {
+  await fakeSpeech(page, { heard: "मेरी किराने की दुकान है" });
+  await mockApi(page, () => turn({}));
+  await page.goto("/hi/advisor");
+  await page.getByRole("button", { name: "बोलें" }).click();
+  await expect(page.locator("#advisor-input")).toHaveValue("मेरी किराने की दुकान है");
+  expect(await page.evaluate(() => (window as unknown as { __speechLang: string }).__speechLang)).toBe("hi-IN");
+  await expect(page.getByTestId("voice-error")).toHaveCount(0);
+});
+
+test("Speak: a blocked microphone says how to fix it instead of failing silently", async ({ page }) => {
+  await fakeSpeech(page, { error: "not-allowed" });
+  await mockApi(page, () => turn({ locale: "en" }));
+  await page.goto("/en/advisor");
+  await page.getByRole("button", { name: "Speak" }).click();
+  await expect(page.getByTestId("voice-error")).toContainText("The microphone is blocked");
+  await expect(page.getByRole("button", { name: "Speak" })).toBeVisible(); // back to idle, can retry
+});
+
+test("the microphone is allowed for this site (Permissions-Policy)", async ({ request }) => {
+  const res = await request.get("/en/advisor");
+  expect(res.headers()["permissions-policy"]).toContain("microphone=(self)");
 });

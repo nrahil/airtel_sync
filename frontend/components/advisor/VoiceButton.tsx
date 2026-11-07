@@ -15,7 +15,7 @@ interface Recognition {
   maxAlternatives: number;
   onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
   onend: (() => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
   start(): void;
   stop(): void;
 }
@@ -28,7 +28,25 @@ function recognitionCtor(): RecognitionCtor | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
-export function VoiceButton({ locale, t, onText }: { locale: Locale; t: Messages; onText: (text: string) => void }) {
+/** Why voice failed, in words the owner can act on (`null`: they stopped it themselves). */
+function failure(error: string, t: Messages): string | null {
+  if (error === "aborted") return null;
+  if (error === "not-allowed" || error === "service-not-allowed") return t.advisor.voiceBlocked;
+  return t.advisor.voiceFailed; // no-speech, network, audio-capture, ...
+}
+
+export function VoiceButton({
+  locale,
+  t,
+  onText,
+  onError,
+}: {
+  locale: Locale;
+  t: Messages;
+  onText: (text: string) => void;
+  /** A message to show the owner, or `null` to clear it. */
+  onError: (message: string | null) => void;
+}) {
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
   const ref = useRef<Recognition | null>(null);
@@ -54,10 +72,19 @@ export function VoiceButton({ locale, t, onText }: { locale: Locale; t: Messages
       if (transcript) onText(transcript);
     };
     rec.onend = () => setListening(false);
-    rec.onerror = () => setListening(false);
+    rec.onerror = (event) => {
+      setListening(false);
+      onError(failure(event.error, t));
+    };
     ref.current = rec;
+    onError(null);
     setListening(true);
-    rec.start();
+    try {
+      rec.start();
+    } catch {
+      setListening(false);
+      onError(t.advisor.voiceFailed);
+    }
   };
 
   return (

@@ -1,4 +1,5 @@
-"""Advisor templates: questions, notices, blocked-item reasons and the fallback explanation.
+"""Advisor templates: questions, notices, blocked-item reasons, the fallback explanation
+and the per-product "why" sentences.
 
 Templates live in ``templates/<locale>.json`` for all 10 supported languages and are
 checked at import time against ``en.json`` (same keys, same ``{placeholders}``), so
@@ -26,7 +27,7 @@ from app.domain.reasons import ReasonCode
 
 SUPPORTED_LOCALES: Final = ("en", "hi", "mr", "kn", "gu", "te", "ta", "bn", "pa", "ml")
 REVIEWED_LOCALES: Final = ("en", "hi")
-SECTIONS: Final = ("questions", "notices", "reasons", "explanation")
+SECTIONS: Final = ("questions", "notices", "reasons", "explanation", "why")
 
 _PLACEHOLDER: Final = re.compile(r"\{(\w+)\}")
 
@@ -146,3 +147,8 @@ def reason_text(code: ReasonCode, locale: str) -> str:
 
 def explanation_strings(locale: str) -> dict[str, str]:
     return _section(locale, "explanation")
+
+
+def why(key: str, locale: str) -> str:
+    """A "why is this in my plan" sentence template (see :mod:`app.advisor.why`)."""
+    return _section(locale, "why")[key]

@@ -89,6 +89,36 @@ async def test_ll_07_one_retry_then_success(status: int) -> None:
     assert calls == 2
 
 
+@pytest.mark.parametrize(("retry_after", "calls_made", "slept"), [("1.5", 2, 1.5), ("30", 1, None)])
+async def test_429_honours_a_short_retry_after_and_skips_a_long_one(
+    monkeypatch: pytest.MonkeyPatch, retry_after: str, calls_made: int, slept: float | None
+) -> None:
+    """Round 2 Phase 1: a live walkthrough hit Groq's rate limit and dropped to the form."""
+    sleeps: list[float] = []
+
+    async def record(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("app.advisor.groq_client.asyncio.sleep", record)
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, headers={"retry-after": retry_after})
+        return httpx.Response(200, json=OK_BODY)
+
+    if slept is None:
+        with pytest.raises(LlmUnavailableError, match="429"):
+            await client(handler).complete([], json_mode=True)
+        assert sleeps == []
+    else:
+        assert await client(handler).complete([], json_mode=True) == '{"a": 1}'
+        assert sleeps == [slept]
+    assert calls == calls_made
+
+
 async def test_ll_07_gives_up_after_one_retry() -> None:
     calls = 0
 

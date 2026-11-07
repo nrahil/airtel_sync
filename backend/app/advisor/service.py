@@ -48,10 +48,11 @@ from app.advisor.verifier import (
     template_explanation,
     verify_explanation,
 )
+from app.advisor.why import why_line
 from app.domain.catalogue import Catalogue
 from app.domain.cities import CityDirectory
 from app.domain.pricing import PricingPolicy, price_bundle
-from app.domain.profile import BusinessProfile, GstinState
+from app.domain.profile import MAX_EMPLOYEES, MAX_SITES, BusinessProfile, GstinState
 from app.domain.reasons import ReasonCode
 from app.domain.recommender import recommend
 
@@ -68,6 +69,7 @@ class TurnCapError(RuntimeError):
 # Jailbreak / exfiltration screen (LLM01). Matches are refused and logged, never sent.
 _INJECTION: Final = re.compile(
     r"ignore (?:all |the |any )?(?:previous|prior|above|earlier) (?:instructions|rules|prompts?)"
+    r"|ignore (?:all |the |any |your |these )?(?:instructions|rules|prompts?)\b"
     r"|disregard (?:all |the |your )?(?:instructions|rules)"
     r"|(?:reveal|show|print|repeat|leak)\b.{0,30}\b(?:system|hidden|initial) prompt"
     r"|system prompt|developer mode|jailbreak|\bDAN\b"
@@ -102,6 +104,7 @@ class State:
     pending: str | None = None
     locale: str = "en"
     refining: bool = False  # the owner asked to fine-tune the plan
+    plan: str | None = None  # signature of the last plan shown (edit-after-plan diffing)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -112,6 +115,7 @@ class State:
             "pending": self.pending,
             "locale": self.locale,
             "refining": self.refining,
+            "plan": self.plan,
         }
 
     @classmethod
@@ -126,6 +130,7 @@ class State:
             pending=data.get("pending"),
             locale=data.get("locale", "en"),
             refining=bool(data.get("refining", False)),
+            plan=data.get("plan"),
         )
 
     @property
@@ -174,6 +179,30 @@ def profile_from_slots(slots: Slots) -> BusinessProfile:
 
 def _rupees(paise: int) -> int:
     return (paise + 50) // 100
+
+
+# A rejected value gets a re-ask that says what a good answer looks like (D21).
+_RANGE_NOTICES: Final = {
+    "employee_count": ("STAFF_RANGE", MAX_EMPLOYEES),
+    "num_sites": ("SITES_RANGE", MAX_SITES),
+}
+
+
+def _invalid_notice(rejected: tuple[str, ...], locale: str) -> str:
+    for slot in rejected:
+        if slot in _RANGE_NOTICES:
+            code, maximum = _RANGE_NOTICES[slot]
+            return msg.notice(code, locale).format(min=1, max=maximum)
+    return msg.notice("INVALID_VALUE", locale)
+
+
+def _plan_signature(recommendation: dict[str, Any]) -> str:
+    """What the owner sees change: lines, quantities, extras and the total."""
+    pricing = recommendation["pricing"]
+    parts = [f"{ln['product_id']}x{ln['qty']}" for ln in pricing["lines"]]
+    parts += [f"+{a['product_id']}x{a['qty']}" for a in recommendation["addons"]]
+    parts.append(str(pricing["totals"]["monthly_total_paise"]))
+    return "|".join(parts)
 
 
 class AdvisorService:
@@ -261,7 +290,7 @@ class AdvisorService:
             return reply
 
         if extracted.rejected:
-            reply.say(msg.notice("INVALID_VALUE", state.locale), "notice")
+            reply.say(_invalid_notice(extracted.rejected, state.locale), "notice")
         values = {**extracted.values, **hints}
         pending = SlotName(state.pending) if state.pending else None
         if (
@@ -272,6 +301,18 @@ class AdvisorService:
         ):
             values.pop(pending.value, None)
             values.update(self._unsure(reply, pending))
+        elif (
+            pending is SlotName.SEGMENT
+            and "segment" not in values
+            and state.slots.segment is None
+            and not extracted.rejected
+            and (not values or "business_type" in values)
+        ):
+            # "I sell dreams": a business we can't place. Offer the four kinds by name.
+            reply.say(msg.notice("SEGMENT_UNCLEAR", state.locale), "notice")
+        elif pending is not None and not values and not extracted.rejected:
+            # Nothing usable: say so rather than silently repeating the question.
+            reply.say(msg.notice("NOT_UNDERSTOOD", state.locale), "notice")
         self._apply(reply, values)
         await self._advance(reply)
         return reply
@@ -295,7 +336,7 @@ class AdvisorService:
         try:
             clean = coerce_answer(slot, value)
         except ValueError:
-            reply.say(msg.notice("INVALID_VALUE", state.locale), "notice")
+            reply.say(_invalid_notice((slot.value,), state.locale), "notice")
             await self._advance(reply, rephrase=False)
             return reply
         self._apply(reply, {slot.value: clean})
@@ -316,7 +357,7 @@ class AdvisorService:
         """Pick up a saved session (resume link): the current question or the plan."""
         reply = Reply(state)
         reply.say(msg.notice("WELCOME_BACK", state.locale), "notice")
-        await self._advance(reply, rephrase=False, offline=True)
+        await self._advance(reply, rephrase=False, offline=True, resuming=True)
         return reply
 
     # -------------------------------------------------------------- internals
@@ -345,13 +386,16 @@ class AdvisorService:
 
     def _apply(self, reply: Reply, values: dict[str, Any]) -> None:
         state = reply.state
+        known_city = (state.slots.city, state.slots.city_tier)
         if values:
             state.slots = merge(state.slots, values)
         if state.slots.city is not None and state.slots.city_tier is None:
             info = self.cities.lookup(state.slots.city)
             if info is None:
-                # Unknown city: ask again, never guess a tier (LL-09, D22).
-                state.slots = state.slots.model_copy(update={"city": None})
+                # Unknown city: ask again, never guess a tier (LL-09, D22). A city we
+                # already knew stays, so a plan on screen isn't lost to a typo.
+                city, tier = known_city if known_city[1] is not None else (None, None)
+                state.slots = state.slots.model_copy(update={"city": city, "city_tier": tier})
                 reply.say(msg.notice("CITY_UNKNOWN", state.locale), "notice")
             else:
                 state.slots = state.slots.model_copy(
@@ -361,15 +405,34 @@ class AdvisorService:
             state.asked.append(state.pending)
         state.slots = finalise_soft(state.slots, state.asked_set)
 
-    async def _advance(self, reply: Reply, *, rephrase: bool = True, offline: bool = False) -> None:
+    async def _advance(
+        self,
+        reply: Reply,
+        *,
+        rephrase: bool = True,
+        offline: bool = False,
+        resuming: bool = False,
+    ) -> None:
         state = reply.state
         slot = next_slot(state.slots, state.asked_set, refining=state.refining)
         if slot is None:
             state.pending = None
             state.refining = False
             reply.recommendation = await self._recommend(state, use_llm=not offline)
-            reply.say(msg.notice("DONE", state.locale), "notice")
-            reply.say(reply.recommendation["explanation"]["text"], "explanation")
+            signature = _plan_signature(reply.recommendation)
+            if state.plan is None or resuming:
+                reply.say(msg.notice("DONE", state.locale), "notice")
+            elif signature != state.plan:
+                reply.say(msg.notice("PLAN_UPDATED", state.locale), "notice")
+            else:
+                # Nothing changed (small talk, a refused request): no repeat explanation,
+                # and no "plan unchanged" on top of a re-ask or refusal already said.
+                if not reply.messages:
+                    reply.say(msg.notice("PLAN_SAME", state.locale), "notice")
+                return
+            # The explanation lives on the plan card only: repeating it in the chat
+            # showed the same paragraph twice on screen (Round 2 Phase 1 feedback).
+            state.plan = signature
             return
         state.pending = slot.value
         phrase = rephrase and not offline
@@ -426,7 +489,8 @@ class AdvisorService:
                 FactBlocked(
                     id=b.product_id,
                     name=self.catalogue[b.product_id].product_name,
-                    reason=reasons[b.product_id].value,
+                    # Plain words in the owner's language, never the internal code.
+                    reason=msg.reason_text(reasons[b.product_id], state.locale),
                 )
                 for b in rec.blocked
             ),
@@ -448,6 +512,13 @@ class AdvisorService:
                 }
                 for a in rec.addons
             ],
+            # One plain sentence per product: why it's there, from what the owner said.
+            "why": {
+                line.product_id: why_line(
+                    line.product_id, line.source, line.qty, profile, state.locale
+                )
+                for line in (*rec.core, *rec.addons)
+            },
             "blocked": [
                 {
                     "product_id": b.product_id,

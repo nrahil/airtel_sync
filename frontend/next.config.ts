@@ -36,8 +36,9 @@ const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-  // The KYC upload uses the camera through a file input; nothing else is allowed.
-  { key: "Permissions-Policy", value: "camera=(self), microphone=(), geolocation=(), payment=(), usb=()" },
+  // Camera: the KYC upload (file input). Microphone: the advisor's Speak button
+  // (browser speech-to-text; we never record or upload audio). Nothing else.
+  { key: "Permissions-Policy", value: "camera=(self), microphone=(self), geolocation=(), payment=(), usb=()" },
 ];
 
 const nextConfig: NextConfig = {

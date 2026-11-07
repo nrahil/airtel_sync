@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { HelpPanel } from "@/components/advisor/HelpPanel";
 import { QuestionForm } from "@/components/advisor/QuestionForm";
-import { RecommendationCard } from "@/components/advisor/RecommendationCard";
+import { type PlanChange, RecommendationCard, diffPlans } from "@/components/advisor/RecommendationCard";
 import { VoiceButton } from "@/components/advisor/VoiceButton";
 import { JourneySteps } from "@/components/JourneySteps";
 import {
@@ -39,6 +39,24 @@ interface Snapshot {
 
 const storageKey = (locale: Locale) => `udyam.advisor.${locale}`;
 
+/** Answers the owner can change once the plan is on screen. */
+const EDITABLE = ["segment", "city", "employee_count", "num_sites"] as const;
+type Editable = (typeof EDITABLE)[number];
+
+/** The question for an answer being changed (same inputs as the guided form). */
+function editQuestion(slot: Editable): Question {
+  switch (slot) {
+    case "segment":
+      return { slot, kind: "choice", options: ["micro", "prof", "multi", "mfg"], min: null, max: null };
+    case "city":
+      return { slot, kind: "text", options: [], min: null, max: null };
+    case "employee_count":
+      return { slot, kind: "number", options: [], min: 1, max: 500 };
+    case "num_sites":
+      return { slot, kind: "number", options: [], min: 1, max: 50 };
+  }
+}
+
 export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [mode, setMode] = useState<"chat" | "form">("chat");
@@ -48,9 +66,13 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
   const [progress, setProgress] = useState<TurnResponse["progress"]>(null);
   const [assumed, setAssumed] = useState<string[]>([]);
   const [canRefine, setCanRefine] = useState(false);
+  const [changed, setChanged] = useState<PlanChange | null>(null);
+  const [editing, setEditing] = useState<Editable | null>(null);
+  const lastPlan = useRef<Recommendation | null>(null); // the plan an edit is compared with
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -73,6 +95,13 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
       setMode(res.mode);
       setQuestion(res.question);
       setRecommendation(res.recommendation);
+      if (res.recommendation) {
+        // Highlight what an edit changed against the plan shown before it.
+        setChanged(lastPlan.current ? diffPlans(lastPlan.current, res.recommendation) : null);
+        lastPlan.current = res.recommendation;
+      } else {
+        setChanged(null);
+      }
       setProgress(res.progress ?? null);
       setAssumed(res.assumed ?? []);
       setCanRefine(Boolean(res.can_refine));
@@ -113,13 +142,22 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
     (startMode: "chat" | "form") => {
       setEntries([]);
       setRecommendation(null);
+      setChanged(null);
+      setEditing(null);
+      lastPlan.current = null;
       sessionStorage.removeItem(storageKey(locale));
       void run(() => startSession(locale, startMode));
     },
     [locale, run],
   );
 
+  // Start (or restore) once per language. React's Strict Mode runs effects twice in
+  // development; without this guard that opened two sessions and showed the greeting
+  // and first question twice.
+  const booted = useRef<Locale | null>(null);
   useEffect(() => {
+    if (booted.current === locale) return;
+    booted.current = locale;
     // A resume link (`?s=<session>`, texted to the owner) picks up where they left off.
     const resume = new URLSearchParams(window.location.search).get("s");
     if (resume) {
@@ -137,6 +175,7 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
       setEntries(snap.entries);
       setQuestion(snap.question);
       setRecommendation(snap.recommendation);
+      lastPlan.current = snap.recommendation;
       setProgress(snap.progress ?? null);
       setAssumed(snap.assumed ?? []);
       setCanRefine(Boolean(snap.canRefine));
@@ -159,6 +198,7 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
 
   const answer = (slot: string, value: unknown, label: string) => {
     if (!sessionId || busy) return;
+    setEditing(null);
     void run(() => sendAnswer(sessionId, slot, value), label);
   };
 
@@ -173,6 +213,45 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
   };
 
   const isRefineSlot = question ? (REFINE_SLOTS as readonly string[]).includes(question.slot) : false;
+  const remaining = progress ? progress.total - progress.step + 1 : 0;
+
+  const chatForm = (placeholder: string) => (
+    <>
+    <form onSubmit={submitText} className="flex items-end gap-2">
+      <label className="sr-only" htmlFor="advisor-input">
+        {placeholder}
+      </label>
+      <textarea
+        id="advisor-input"
+        rows={2}
+        maxLength={500}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder={placeholder}
+        lang={bcp47(locale)}
+        className="min-h-12 flex-1 resize-none rounded-xl border border-neutral-300 px-3 py-2 text-base dark:border-neutral-600 dark:bg-neutral-900"
+      />
+      <VoiceButton
+        locale={locale}
+        t={t}
+        onText={(text) => setDraft((d) => `${d} ${text}`.trim())}
+        onError={setVoiceError}
+      />
+      <button
+        type="submit"
+        disabled={busy || !draft.trim()}
+        className="h-12 rounded-xl bg-red-700 px-4 font-medium text-white disabled:opacity-50"
+      >
+        {t.advisor.send}
+      </button>
+    </form>
+    {voiceError && (
+      <p role="status" data-testid="voice-error" className="text-sm text-red-700">
+        {voiceError}
+      </p>
+    )}
+    </>
+  );
   const assumedLabel = (slot: string) =>
     (t.advisor.assumed as Record<string, string>)[slot] ?? slot;
 
@@ -207,7 +286,7 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
 
       {recommendation && (
         <>
-          <RecommendationCard recommendation={recommendation} locale={locale} t={t} />
+          <RecommendationCard recommendation={recommendation} locale={locale} t={t} changed={changed} />
           {assumed.length > 0 && (
             <section
               data-testid="assumed"
@@ -233,6 +312,52 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
               )}
             </section>
           )}
+          <section
+            data-testid="edit-answers"
+            className="flex flex-col gap-2 rounded-xl p-3 text-sm ring-1 ring-neutral-200 dark:ring-neutral-700"
+          >
+            <p className="font-medium">{t.advisor.editTitle}</p>
+            {editing ? (
+              <>
+                <p className="text-neutral-600 dark:text-neutral-300">{t.advisor.editSlots[editing]}</p>
+                <QuestionForm
+                  key={editing}
+                  question={editQuestion(editing)}
+                  t={t}
+                  disabled={busy}
+                  onAnswer={answer}
+                />
+                <button
+                  type="button"
+                  onClick={() => setEditing(null)}
+                  className="self-start text-neutral-500 underline"
+                >
+                  {t.advisor.cancel}
+                </button>
+              </>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {EDITABLE.map((slot) => (
+                  <button
+                    key={slot}
+                    type="button"
+                    data-testid={`edit-${slot}`}
+                    disabled={busy}
+                    onClick={() => setEditing(slot)}
+                    className="min-h-10 rounded-full border border-neutral-300 px-3 py-1 disabled:opacity-50 dark:border-neutral-600"
+                  >
+                    {t.advisor.editSlots[slot]}
+                  </button>
+                ))}
+              </div>
+            )}
+            {mode === "chat" && !editing && (
+              <>
+                <p className="text-xs text-neutral-500">{t.advisor.editHint}</p>
+                {chatForm(t.advisor.editPlaceholder)}
+              </>
+            )}
+          </section>
           <button
             type="button"
             onClick={() => void customise()}
@@ -248,7 +373,7 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
         <>
           {progress && (
             <p data-testid="progress" className="text-xs font-medium text-neutral-500">
-              {fill(t.advisor.progress, progress)}
+              {fill(t.advisor.progress, progress)} · {remaining > 1 ? t.advisor.timeLeft : t.advisor.almostDone}
             </p>
           )}
           {mode === "form" ? (
@@ -262,29 +387,7 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
             />
           ) : (
             <>
-              <form onSubmit={submitText} className="flex items-end gap-2">
-                <label className="sr-only" htmlFor="advisor-input">
-                  {t.advisor.placeholder}
-                </label>
-                <textarea
-                  id="advisor-input"
-                  rows={2}
-                  maxLength={500}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  placeholder={t.advisor.placeholder}
-                  lang={bcp47(locale)}
-                  className="min-h-12 flex-1 resize-none rounded-xl border border-neutral-300 px-3 py-2 text-base dark:border-neutral-600 dark:bg-neutral-900"
-                />
-                <VoiceButton locale={locale} t={t} onText={(text) => setDraft((d) => `${d} ${text}`.trim())} />
-                <button
-                  type="submit"
-                  disabled={busy || !draft.trim()}
-                  className="h-12 rounded-xl bg-red-700 px-4 font-medium text-white disabled:opacity-50"
-                >
-                  {t.advisor.send}
-                </button>
-              </form>
+              {chatForm(t.advisor.placeholder)}
               {isRefineSlot && (
                 <button
                   type="button"

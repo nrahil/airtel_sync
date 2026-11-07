@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("app shell renders on a phone viewport", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Udyam Digital" })).toBeVisible();
-  await expect(page.getByTestId("shell-status")).toBeVisible();
+  await expect(page.getByTestId("start")).toBeVisible();
   // Mobile-first: no horizontal overflow.
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > window.innerWidth,

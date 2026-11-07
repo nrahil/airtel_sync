@@ -22,7 +22,13 @@
     "UNSURE_PICKED": "No problem — I'll go with what suits most businesses like yours. You can change it later.",
     "UNSURE_ROUGH": "No problem — a rough answer is fine.",
     "REFINE": "Sure — a few quick questions to fine-tune your plan. You can say “not sure” to any of them.",
-    "WELCOME_BACK": "Welcome back! Let's carry on where you left off."
+    "WELCOME_BACK": "Welcome back! Let's carry on where you left off.",
+    "PLAN_UPDATED": "I've updated your plan — the changes are highlighted below.",
+    "PLAN_SAME": "Your plan stays the same. To change it, tell me what's different — for example “we have six staff” or “two branches”.",
+    "SEGMENT_UNCLEAR": "I couldn't tell what kind of business that is. Is it a shop or local service, a professional office (clinic, CA, lawyer), several branches, or a workshop/factory?",
+    "NOT_UNDERSTOOD": "Sorry, I didn't catch that. Could you say it another way?",
+    "STAFF_RANGE": "Please give the number of people as {min} to {max} — if it's just you, say {min}. For a bigger team, tap “Have someone call me”.",
+    "SITES_RANGE": "Please give the number of locations as {min} to {max}. For more, tap “Have someone call me”."
   },
   "reasons": {
     "TIER_NOT_SERVED": "not available in your city yet",
@@ -40,5 +46,15 @@
     "intro": "Based on what you told me, I recommend:",
     "total": "That is ₹{monthly} per month plus ₹{setup} one-time setup, on a {months}-month contract (GST included).",
     "blocked": "Not included: {items}."
+  },
+  "why": {
+    "internet": "Your main internet connection — one for each location (you have {sites}).",
+    "per_site": "One for each location (you have {sites}).",
+    "lines": "You said {staff} staff → {qty} SIMs, one for every {per} people.",
+    "per_person": "One for each person (you said {staff} staff).",
+    "cameras": "Two cameras for each location (you have {sites}).",
+    "per_10_staff": "One for every {per} people (you said {staff} staff).",
+    "segment": "Most businesses like yours use this.",
+    "asked": "You asked for this."
   }
 }

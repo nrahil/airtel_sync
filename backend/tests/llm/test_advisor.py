@@ -265,23 +265,26 @@ async def test_form_mode_from_the_start_needs_no_llm(make_advisor: MakeAdvisor) 
 
 
 @pytest.mark.parametrize(
-    ("bad", "slot"),
+    ("bad", "slot", "says"),
     [
-        ({"employee_count": -5}, "employee_count"),
-        ({"num_sites": 10000}, "num_sites"),
-        ({"employee_count": "lots"}, "employee_count"),
-        ({"segment": "bank"}, "segment"),
+        # Round 2 Phase 1: counts get a re-ask that says what a good answer looks like.
+        ({"employee_count": -5}, "employee_count", "Please give the number of people as 1 to 500"),
+        ({"employee_count": 0}, "employee_count", "Please give the number of people as 1 to 500"),
+        ({"employee_count": 501}, "employee_count", "Please give the number of people as 1 to 500"),
+        ({"num_sites": 10000}, "num_sites", "Please give the number of locations as 1 to 50"),
+        ({"employee_count": "lots"}, "employee_count", "Please give the number of people"),
+        ({"segment": "bank"}, "segment", "That doesn't look right"),
     ],
 )
 async def test_ll_08_out_of_range_slots_are_rejected_and_reasked(
-    make_advisor: MakeAdvisor, bad: dict[str, Any], slot: str
+    make_advisor: MakeAdvisor, bad: dict[str, Any], slot: str, says: str
 ) -> None:
     given = {"segment": "prof", "city": "Mumbai", **bad}
     service, _ = make_advisor(FakeLlm(slots_script(given)))
     start = await service.start("en", Mode.CHAT)
     reply = await service.chat(start.state, "whatever")
     assert getattr(reply.state.slots, slot) is None
-    assert any(m["text"].startswith("That doesn't look right") for m in reply.messages)
+    assert any(m["text"].startswith(says) for m in reply.messages)
     assert reply.question is not None
 
 
