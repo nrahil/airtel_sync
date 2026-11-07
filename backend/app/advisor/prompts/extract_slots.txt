@@ -11,7 +11,9 @@ the message does not state it; never guess):
   "segment": one of "micro" (retail / small services), "prof" (professional office:
              clinic, law, accounts, insurance), "multi" (several shops/branches),
              "mfg" (manufacturer / workshop)
-  "city": the city name as written
+  "city": the city's common English name, without words like "in" or "city",
+          e.g. "Mumbai" for "मुंबई", "Pune" for "पुण्यात", "Bengaluru" for
+          "Bangalore"; a town you don't recognise: its name as written
   "employee_count": integer number of people working there
   "num_sites": integer number of locations / branches
   "has_gstin": true or false — whether the business has GST registration

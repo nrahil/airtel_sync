@@ -300,3 +300,46 @@ test("fewer uploads: verify the GSTIN online, preview it, or ask for a visit ins
   expect(calls).toContain(`POST /api/v1/kyc/applications/${APP_ID}/gst/lookup`);
   expect(calls).toContain(`POST /api/v1/kyc/applications/${APP_ID}/visit`);
 });
+
+test("once verified, the registry match is stated, not asked", async ({ page }) => {
+  // Round 2 Phase 5 walkthrough: "Is this your business?" still showed after KYC passed.
+  let submitted = false;
+  const app = () => ({
+    ...application(submitted ? "PASS" : "DRAFT", []),
+    documents: (["GST_CERTIFICATE", "UDYAM_CERTIFICATE", "SIGNATORY_ID", "ADDRESS_PROOF"] as const).map((slot) => ({
+      slot,
+      source: slot === "GST_CERTIFICATE" ? "LOOKUP" : "OCR",
+      uploaded_at: "2026-07-15T10:00:00+05:30",
+    })),
+    on_record: { gstin: true, udyam: false },
+    on_record_masked: { contact_name: "A. R.", gstin: "29ABCD******1Z5", udyam_number: null },
+    ...(submitted
+      ? { verdict: { decision: "PASS", review_required: false, lookup_offered: false, handed_off: false, checks: [], fixes: [] } }
+      : {}),
+  });
+  await page.addInitScript(() => sessionStorage.setItem("udyam.token", "v1.p_test.123.sig"));
+  await page.route("**/api/v1/**", async (route) => {
+    const p = new URL(route.request().url()).pathname;
+    if (p.endsWith(`/orders/${ORDER_ID}`)) return route.fulfill({ json: order(null, "KYC") });
+    if (p.includes("/lookup/gstin/")) {
+      return route.fulfill({
+        json: { outcome: "FOUND", gstin: "29ABC*********5", status: "ACTIVE", legal_name: "A*** R** T*****", trade_name: "A*** D*****", state: "Karnataka" },
+      });
+    }
+    if (p.endsWith("/kyc/applications")) return route.fulfill({ status: 201, json: app() });
+    if (p.endsWith("/submit")) {
+      submitted = true;
+      return route.fulfill({ json: app() });
+    }
+    return route.fulfill({ json: app() });
+  });
+  await page.goto(`/en/kyc?o=${ORDER_ID}`);
+  const form = page.getByTestId("kyc-on-record");
+  await form.getByLabel(/GSTIN/).fill("29ABCDE1234F1Z5");
+  await form.getByLabel(/Udyam number/).focus();
+  await expect(page.getByTestId("gst-preview")).toContainText("Is this your business?");
+  await form.getByRole("button", { name: "Continue to documents" }).click();
+  await page.getByTestId("kyc-submit").click();
+  await expect(page.getByTestId("kyc-verdict")).toHaveAttribute("data-decision", "PASS");
+  await expect(page.getByTestId("gst-preview")).toHaveText("Verified in the GST registry: A*** D*****, Karnataka.");
+});

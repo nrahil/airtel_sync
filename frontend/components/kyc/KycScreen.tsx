@@ -569,7 +569,9 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
           )}
           {gstPreview && !editing && (
             <p data-testid="gst-preview" className="rounded-lg bg-neutral-100 p-2 dark:bg-neutral-800">
-              {gstPreview === "none" ? t.kyc.gstNotFound : fill(t.kyc.gstFound, { name: gstPreview.trade_name, state: gstPreview.state })}
+              {gstPreview === "none"
+                ? t.kyc.gstNotFound
+                : fill(passed ? t.kyc.gstVerified : t.kyc.gstFound, { name: gstPreview.trade_name, state: gstPreview.state })}
             </p>
           )}
         </section>

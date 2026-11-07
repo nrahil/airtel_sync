@@ -21,9 +21,8 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict
 
-from app.advisor.messages import explanation_strings, reason_text
+from app.advisor.messages import explanation_strings
 from app.domain.catalogue import Catalogue
-from app.domain.reasons import ReasonCode
 
 MAX_EXPLANATION_CHARS: Final = 1200
 _PRODUCT_ID: Final = re.compile(r"\bP\d{2}\b", re.I)
@@ -157,7 +156,7 @@ def verify_explanation(raw: str, facts: Facts, catalogue: Catalogue) -> str | No
     return text
 
 
-def template_explanation(facts: Facts, locale: str, reasons: dict[str, ReasonCode]) -> str:
+def template_explanation(facts: Facts, locale: str) -> str:
     strings = explanation_strings(locale)
     items = ", ".join(f"{p.name} x {p.qty}" if p.qty > 1 else p.name for p in facts.products)
     parts = [
@@ -169,8 +168,6 @@ def template_explanation(facts: Facts, locale: str, reasons: dict[str, ReasonCod
         ),
     ]
     if facts.blocked:
-        blocked = "; ".join(
-            f"{b.name} — {reason_text(reasons[b.id], locale)}" for b in facts.blocked
-        )
+        blocked = "; ".join(f"{b.name} — {b.reason}" for b in facts.blocked)
         parts.append(strings["blocked"].format(items=blocked))
     return " ".join(parts)

@@ -35,6 +35,7 @@
     "BELOW_MIN_EMPLOYEES": "needs a larger team",
     "BELOW_MIN_SITES": "needs more locations",
     "GSTIN_REQUIRED": "needs a GST registration",
+    "GSTIN_UNKNOWN": "needs a GST registration — tell me if you have one",
     "GSTIN_CANCELLED": "your GSTIN is cancelled",
     "GSTIN_SUSPENDED": "your GSTIN is suspended",
     "GSTIN_UNVERIFIED": "unlocks once your GSTIN is verified at checkout",

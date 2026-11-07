@@ -380,6 +380,7 @@
       "FAIL": "We couldn't verify these documents:"
     },
     "gstFound": "Found in the GST registry: {name}, {state}. Is this your business?",
+    "gstVerified": "Verified in the GST registry: {name}, {state}.",
     "gstNotFound": "We couldn't find this GSTIN. Please check it — or leave it blank.",
     "verifyGst": "Verify my GSTIN online instead — no certificate needed",
     "verifyUdyam": "Verify my Udyam number online instead",

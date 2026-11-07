@@ -127,7 +127,7 @@ _HI: Final[dict[KycReason, str]] = {
     KycReason.GSTIN_FORMAT_INVALID: "आपके प्रमाणपत्र का GSTIN अधूरा लगता है। कृपया इसे ठीक "
     "वैसे ही दोबारा लिखें जैसा छपा है (15 अक्षर)।",
     KycReason.GSTIN_CHECKSUM_INVALID: "आपके प्रमाणपत्र का GSTIN चेक-डिजिट में फ़ेल है, यानी कोई "
-    "अक्षर गलत है। कृपया इसे दोबारा दर्ज करें।",
+    "अक्षर गलत है। कृपया इसे दोबारा दर्ज करें या साफ़ प्रमाणपत्र अपलोड करें।",
     KycReason.GSTIN_OCR_CORRECTED: "हमने आपके GSTIN में {corrections} पढ़ा और ठीक किया; ठीक "
     "किया गया GSTIN GST रजिस्ट्री से मेल खाता है।",
     KycReason.GSTIN_AMBIGUOUS_READ: "हम आपका GSTIN पक्के तौर पर नहीं पढ़ पाए; टीम का कोई "

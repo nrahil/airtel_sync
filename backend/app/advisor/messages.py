@@ -61,13 +61,17 @@ def _check(locale: str, data: Catalogue, reference: Catalogue) -> None:
                 raise TemplateError(f"{locale}.{section}.{key}: placeholders != {sorted(want)}")
 
 
+# Reason texts the advisor needs beyond the engines' codes.
+ADVISOR_REASONS: Final = frozenset({"GSTIN_UNKNOWN"})
+
+
 @cache
 def catalogues() -> dict[str, Catalogue]:
     """All locale templates, validated against English (raises ``TemplateError``)."""
     reference = _read("en")
     if set(reference["questions"]) != {s.value for s in SlotName}:
         raise TemplateError("en.questions must cover every slot")
-    if set(reference["reasons"]) != {c.value for c in ReasonCode}:
+    if set(reference["reasons"]) != {c.value for c in ReasonCode} | ADVISOR_REASONS:
         raise TemplateError("en.reasons must cover every reason code")
     out: dict[str, Catalogue] = {}
     for locale in SUPPORTED_LOCALES:
@@ -143,6 +147,11 @@ def notice(code: str, locale: str) -> str:
 
 def reason_text(code: ReasonCode, locale: str) -> str:
     return _section(locale, "reasons").get(code.value, code.value)
+
+
+def notice_reason(key: str, locale: str) -> str:
+    """A reason text that isn't an engine code (e.g. ``GSTIN_UNKNOWN``)."""
+    return _section(locale, "reasons")[key]
 
 
 def explanation_strings(locale: str) -> dict[str, str]:

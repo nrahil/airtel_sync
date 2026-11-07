@@ -75,10 +75,22 @@ def test_city_lookup_tolerates_case_and_whitespace_only(directory: CityDirectory
     assert directory.lookup("MYSURU") is not None
 
 
-@pytest.mark.parametrize("name", ["Mysore", "Mumbay", "Pune", "", "   "])
+@pytest.mark.parametrize("name", ["Mysor", "Mumbay", "Pune", "", "   "])
 def test_unknown_city_is_never_guessed(directory: CityDirectory, name: str) -> None:
     """D22: an unknown city returns None so the advisor asks; no fuzzy tier guess."""
     assert directory.lookup(name) is None
+
+
+@pytest.mark.parametrize(
+    ("name", "city"), [("Mysore", "Mysuru"), ("Bombay", "Mumbai"), ("मुंबई", "Mumbai")]
+)
+def test_listed_old_names_and_scripts_are_the_same_city(
+    directory: CityDirectory, name: str, city: str
+) -> None:
+    """Round 2 Phase 5: an exact, listed other name of a served city is not a guess."""
+    info = directory.lookup(name)
+    assert info is not None
+    assert info.name == city
 
 
 def test_city_module_has_no_pincode_logic() -> None:

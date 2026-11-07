@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import Final
 
 from app.domain.leads import Lead
 
@@ -34,6 +35,58 @@ class CityConflictError(ValueError):
 
 def _key(name: str) -> str:
     return " ".join(name.split()).casefold()
+
+
+# How owners actually write the cities we serve: old names, common spellings and the
+# name in their own script (Round 2 Phase 5: "मुंबई", "Bangalore" and "Bombay" were
+# answered with "I don't know that city"). Only *the same city* is listed here; a
+# nearby town (Gurgaon, Thane) is not an alias, because tiers are never guessed (D22).
+CITY_ALIASES: Final[dict[str, tuple[str, ...]]] = {
+    "Ahmedabad": ("Amdavad", "अहमदाबाद", "અમદાવાદ"),
+    "Bengaluru": (
+        "Bangalore",
+        "Bengalore",
+        "Banglore",
+        "बेंगलुरु",
+        "बेंगलूरु",
+        "बैंगलोर",
+        "बंगलौर",
+        "ಬೆಂಗಳೂರು",
+        "பெங்களூரு",
+        "బెంగళూరు",
+        "ബെംഗളൂരു",
+    ),
+    "Chennai": ("Madras", "चेन्नई", "சென்னை", "చెన్నై", "ചെന്നൈ", "ಚೆನ್ನೈ"),
+    "Delhi": ("New Delhi", "दिल्ली", "नई दिल्ली", "ਦਿੱਲੀ", "দিল্লি", "દિલ્હી"),
+    "Hyderabad": ("Secunderabad", "हैदराबाद", "హైదరాబాద్", "ಹೈದರಾಬಾದ್", "ஹைதராபாத்"),
+    "Kolkata": ("Calcutta", "कोलकाता", "কলকাতা"),
+    "Mumbai": ("Bombay", "मुंबई", "मुम्बई", "મુંબઈ"),
+    "Pune": ("Poona", "पुणे", "पूना"),
+    "Bhopal": ("भोपाल",),
+    "Coimbatore": ("Kovai", "कोयंबटूर", "கோயம்புத்தூர்", "கோவை"),
+    "Indore": ("इंदौर", "इन्दौर"),
+    "Jaipur": ("जयपुर",),
+    "Kochi": ("Cochin", "Ernakulam", "कोच्चि", "കൊച്ചി"),
+    "Lucknow": ("Lakhnau", "लखनऊ"),
+    "Ludhiana": ("लुधियाना", "ਲੁਧਿਆਣਾ"),
+    "Mysuru": ("Mysore", "मैसूर", "मैसूरु", "ಮೈಸೂರು"),
+    "Nagpur": ("नागपुर", "नागपूर"),
+    "Nashik": ("Nasik", "नासिक", "नाशिक"),
+    "Patna": ("पटना",),
+    "Surat": ("सूरत", "સુરત"),
+    "Vadodara": ("Baroda", "वडोदरा", "बड़ौदा", "વડોદરા"),
+    "Visakhapatnam": (
+        "Vizag",
+        "Vishakhapatnam",
+        "Vishakapatnam",
+        "विशाखापत्तनम",
+        "విశాఖపట్నం",
+        "విశాఖ",
+    ),
+}
+_ALIAS_KEYS: Final[dict[str, str]] = {
+    _key(alias): city for city, aliases in CITY_ALIASES.items() for alias in aliases
+}
 
 
 class CityDirectory:
@@ -61,7 +114,13 @@ class CityDirectory:
         return cls(cities)
 
     def lookup(self, name: str) -> CityInfo | None:
-        return self._by_key.get(_key(name)) if name.strip() else None
+        if not name.strip():
+            return None
+        key = _key(name.strip(" .,!?।"))
+        found = self._by_key.get(key)
+        if found is None and key in _ALIAS_KEYS:
+            found = self._by_key.get(_key(_ALIAS_KEYS[key]))
+        return found
 
     @property
     def names(self) -> tuple[str, ...]:

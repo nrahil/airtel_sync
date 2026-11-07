@@ -35,6 +35,7 @@
     "BELOW_MIN_EMPLOYEES": "దీనికి పెద్ద బృందం కావాలి",
     "BELOW_MIN_SITES": "దీనికి ఎక్కువ ప్రదేశాలు కావాలి",
     "GSTIN_REQUIRED": "దీనికి GST నమోదు కావాలి",
+    "GSTIN_UNKNOWN": "దీనికి GST నమోదు కావాలి — మీకు ఉంటే చెప్పండి",
     "GSTIN_CANCELLED": "మీ GSTIN రద్దు అయింది",
     "GSTIN_SUSPENDED": "మీ GSTIN సస్పెండ్ అయింది",
     "GSTIN_UNVERIFIED": "చెక్‌అవుట్‌లో GSTIN ధృవీకరించిన తర్వాత అందుబాటులోకి వస్తుంది",

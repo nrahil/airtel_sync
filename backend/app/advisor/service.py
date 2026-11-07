@@ -177,6 +177,18 @@ def profile_from_slots(slots: Slots) -> BusinessProfile:
     )
 
 
+def reason_text(code: ReasonCode, slots: Slots, locale: str) -> str:
+    """Why a product isn't in the plan, in the owner's words.
+
+    GST registration is a fine-tune question, so before it is answered the engines
+    treat the business as unregistered. Saying "needs a GST registration" then reads
+    as "you don't have one" (Round 2 Phase 5 live run), so ask instead.
+    """
+    if code is ReasonCode.GSTIN_REQUIRED and slots.has_gstin is None:
+        return msg.notice_reason("GSTIN_UNKNOWN", locale)
+    return msg.reason_text(code, locale)
+
+
 def _rupees(paise: int) -> int:
     return (paise + 50) // 100
 
@@ -490,7 +502,7 @@ class AdvisorService:
                     id=b.product_id,
                     name=self.catalogue[b.product_id].product_name,
                     # Plain words in the owner's language, never the internal code.
-                    reason=msg.reason_text(reasons[b.product_id], state.locale),
+                    reason=reason_text(reasons[b.product_id], state.slots, state.locale),
                 )
                 for b in rec.blocked
             ),
@@ -500,7 +512,7 @@ class AdvisorService:
         )
         text, source = (await self._explain(facts, state) if use_llm else None), "llm"
         if text is None:
-            text, source = template_explanation(facts, state.locale, reasons), "template"
+            text, source = template_explanation(facts, state.locale), "template"
         return {
             "profile_fingerprint": profile.fingerprint(),
             "pricing": breakdown.model_dump(mode="json"),
@@ -524,7 +536,7 @@ class AdvisorService:
                     "product_id": b.product_id,
                     "product_name": self.catalogue[b.product_id].product_name,
                     "reasons": [r.code.value for r in b.reasons],
-                    "reason_text": msg.reason_text(b.reasons[0].code, state.locale),
+                    "reason_text": reason_text(b.reasons[0].code, state.slots, state.locale),
                     "alternative": b.alternative,
                 }
                 for b in rec.blocked
