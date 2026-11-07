@@ -1,57 +1,48 @@
-# Privacy note — Udyam Digital
+# Privacy and security note — Udyam Digital
 
-*How we handle a small-business owner's data, under India's Digital Personal Data Protection Act 2023. One page; the controls behind each line are mapped to code and tests in [`SECURITY.md`](../SECURITY.md).*
+*How we handle a small-business owner's data under India's Digital Personal Data Protection Act 2023. One page; each control is mapped to code and tests in [`SECURITY.md`](../SECURITY.md).*
 
-**Data fiduciary:** Accel Business. **Grievance officer:** privacy@accel.example. **Notice version:** `2026-11-04.1`, shown in all 10 app languages.
+**Data fiduciary:** Accel Business · **Grievance officer:** privacy@accel.example · **Notice version:** `2026-11-07.1`, in all 10 app languages.
 
-## 1. Consent — asked separately, before anything is read
-- The advisor is **anonymous**: no name, phone or ID is asked, and any typed by mistake is redacted before it is stored or sent anywhere.
-- At checkout the owner confirms a mobile number (OTP) and sees one consent screen with **three separate choices**, none pre-ticked: *plan recommendation* and *business verification (KYC)* are needed to buy; *offers and updates* is optional and off.
-- Every grant and withdrawal is written to an append-only, hash-chained **consent ledger** with the notice version. If the notice changes, the owner must accept it again.
-- Withdrawing KYC consent stops KYC, lookups, orders and payments immediately.
+## 1. Consent: separate, before anything is read
+- The advisor is **anonymous**: no name, phone or ID is asked; any typed by mistake is redacted before it is stored or sent.
+- At checkout the owner confirms a mobile number (OTP) and sees **three separate choices, none pre-ticked**, each saying what, why and **how long**: plan recommendation and business verification are needed to buy; offers is optional and off. Saying no to verification still leaves a way forward: "have someone call me".
+- Every grant and withdrawal goes to an append-only, hash-chained **consent ledger** with the notice version; a new notice must be accepted again. Withdrawing KYC consent stops KYC, lookups, orders and payment at once.
 
-## 2. Purpose limitation
+## 2. Purpose limitation and minimisation
 | Data | Used only for |
 |---|---|
 | Business type, city, team size, sites, needs | Recommending and pricing a plan |
-| GST / Udyam certificate, signatory ID, address proof | Verifying the business, as telecom KYC requires |
+| GST / Udyam numbers, signatory ID, address proof | Verifying the business, as telecom KYC requires |
 | Mobile number | Sign-in and order updates (WhatsApp, then SMS) |
-| Lead history (staff only) | Ranking whom to call; built on pre-contact facts only |
+| Lead history, call outcomes (staff only) | Deciding whom to call; outcomes are stored as codes, never notes |
 
-KYC routes refuse requests without KYC consent (403). Marketing uses nothing unless that box was ticked.
+- **Fastest path collects least:** an online GSTIN check replaces the GST certificate; **DigiLocker** returns an issuer-signed ID and Udyam certificate after DigiLocker's own Allow screen. From the Aadhaar we keep **the name only, never the Aadhaar number**. Typically one photo (the electricity bill) is needed.
+- Uploads are re-encoded on the server (metadata and EXIF dropped). The phone number is stored sealed; look-ups use a keyed hash.
+- **e-sign** stores the SHA-256 of the exact order form and the time; the one-time code is kept only as a keyed hash, expires in 10 minutes and locks after 5 wrong tries.
+- **Share links** ("send this price to my accountant") carry a random token stored only as a SHA-256 hash, reveal no quote or session ID, are not indexed by search engines, and stop working when the price expires, changes or is ordered.
 
-## 3. Minimisation
-- We ask for **four documents**, nothing else. We keep only the fields we verify, plus the verdict.
-- The phone number is stored only **sealed** (encrypted); look-ups use a keyed hash.
-- Uploads are re-encoded server-side: metadata and EXIF are dropped, and file names are never read.
+## 3. Masking, access and encryption
+- Identifiers are masked everywhere except the owner's own export (GSTIN `27XUIX******1ZP`, names as initials). A static test fails the build if a log call could print personal data.
+- Staff see masked data. Opening it needs a reason code, is rate-limited and audited; partners see and act only on leads assigned to their firm.
+- Each person has their own AES-256-GCM key, wrapped by a master key; KYC images, extractions and the phone are sealed under it. HTTPS only, strict CSP and exact-origin CORS.
 
-## 4. Masking and security
-- Identifiers are masked everywhere outside the owner's own export, e.g. GSTIN `27XUIX******1ZP`, Udyam `UDYAM-MH-00-***6696`, names as initials. A static audit test fails the build if any log call could print personal data.
-- Staff see masked data by default. Revealing a lead needs a reason code, is rate-limited, and is audited; partners see only leads assigned to them.
-- **Encryption:** each person has their own AES-256-GCM data key, wrapped by a master key. KYC images, extractions and the phone are sealed under it. All traffic is HTTPS, with strict security headers and CORS.
-
-## 5. Retention
+## 4. Retention
 | Data | Kept until |
 |---|---|
-| Raw document images | **7 days after the journey ends**: activation, cancellation, "not feasible", withdrawal of consent, or 30 idle days without an order. Kept while a paid order is being installed. Deleted by a daily job. |
+| Document images | 7 days after the journey ends (activation, cancellation, not feasible, consent withdrawn, or 30 idle days); deleted by a daily job |
 | Verified fields and verdict | As long as telecom KYC rules require for a live connection |
-| Unused OTP challenges | 1 day |
-| Consent ledger and audit trail | Kept as proof; they contain **no personal data** |
+| Consent ledger, audit trail, e-sign hash | Kept as proof; no personal data in them |
 
-## 6. Processors and transfers
-| Processor | Receives | Location |
+## 5. Processors and transfers
+| Processor | Receives | Where |
 |---|---|---|
-| **Groq** (AI chat helper) | Only the owner's chat text, with phone numbers, email addresses, GSTIN, Udyam and PAN numbers removed first. **Never documents.** | Outside India (disclosed on the consent screen) |
-| Tesseract OCR | Document images | **Our own server**: images never leave it |
-| WhatsApp / SMS gateway (mocked in the prototype) | Phone number and order-status text | Contracted Indian gateway |
+| Groq (AI chat helper) | Chat text with phone, email, GSTIN, Udyam and PAN removed; **never documents** | Outside India, disclosed on the consent screen |
+| Tesseract OCR | Document images | **Our own server**; images never leave it |
+| Browser speech | Speaking into the mic: Chrome sends the audio to Google's speech service; the app records nothing. Replies read aloud use the phone's own voice | Owner's browser |
+| DigiLocker, e-sign, WhatsApp/SMS | Mocked in the prototype; production uses MeitY DigiLocker, a licensed e-sign ASP and an Indian SMS gateway | India |
 
-If Groq is unavailable or switched off, the advisor runs entirely on our own templates and guided form.
+If Groq is off, the advisor runs entirely on our templates and guided form.
 
-## 7. The owner's rights
-Signed in with their number, the owner can:
-- **see and export** everything we hold (decrypted, for them only);
-- **correct** their name, GSTIN or Udyam number (re-verification follows);
-- **withdraw** any consent;
-- **erase** their data. Erasure cancels open orders with a refund, deletes images, sealed data and the phone mapping, and destroys their personal key ("crypto-shredding"), so any copy left in a backup becomes unreadable. Erasure is refused only while an installation is booked or the line is live, where telecom KYC retention applies.
-
-**Breaches** follow the runbook in `SECURITY.md`: contain, assess, notify the Data Protection Board and the people affected.
+## 6. The owner's rights: the "My data" page
+Signed in with their number, the owner sees what we hold (masked), where each document came from and when its photo is deleted, and can **download** everything, **correct** their details (checks made for the old value are dropped and redone), **turn off** any consent, and **erase** everything. Erasure cancels open orders with a refund, deletes images and sealed data and destroys their key ("crypto-shredding", so backups become unreadable); it is refused only while an install is booked or the line is live. **Breaches** follow the runbook in `SECURITY.md`: contain, assess, notify the Data Protection Board and the people affected.

@@ -1,5 +1,6 @@
-%% Udyam Digital — components and data flows (as built, Phases 0–10).
+%% Udyam Digital — components and data flows (as built, through Round 2 Phase 6).
 %% Export: npx -p @mermaid-js/mermaid-cli mmdc -i docs/architecture.mmd -o docs/architecture.svg -b white
+%%         npx -p @mermaid-js/mermaid-cli mmdc -i docs/architecture.mmd -o docs/architecture.png -b white -w 2200
 flowchart TB
   classDef ext fill:#fff7ed,stroke:#c2410c,color:#7c2d12
   classDef store fill:#eef2ff,stroke:#4338ca,color:#1e1b4b
@@ -7,31 +8,38 @@ flowchart TB
   classDef job fill:#f0fdf4,stroke:#15803d,color:#14532d
   classDef edge fill:#f5f5f5,stroke:#404040,color:#171717
 
-  owner["Owner on a phone<br/>10 languages · voice input"]
+  owner["Owner on a phone<br/>10 languages · speak in, replies read aloud"]
+  accountant["Partner / accountant<br/>read-only price link"]
   staff["Sales · partner · KYC reviewer · admin"]
-  pwa["Next.js 15 PWA<br/>advisor → quote → checkout → KYC → tracker · back-office console<br/>static pages · strict CSP · no PII in browser storage"]:::edge
-  gw["FastAPI /api/v1 gateway<br/>security headers · exact-origin CORS · bearer tokens<br/>request id · per-IP rate backstop · PII-masking logs"]:::edge
+  pwa["Next.js 15 PWA<br/>landing → advisor → quote → checkout → KYC → e-sign → pay → tracker<br/>My data · back-office console · strict CSP · no PII in browser storage"]:::edge
+  speech["Browser speech<br/>speech-to-text in · text-to-speech out"]:::ext
+  gw["FastAPI /api/v1 gateway<br/>security headers · exact-origin CORS · bearer tokens<br/>request id · rate limits · PII-masking logs"]:::edge
 
   owner --> pwa
+  accountant --> pwa
   staff --> pwa
+  pwa -.-> speech
   pwa ==>|"HTTPS JSON"| gw
 
   subgraph sell["Discover & buy"]
-    adv["Advisor<br/>slot planner · guided-form fallback<br/>PII redactor · explanation verifier"]
-    engines["Domain engines (pure)<br/>eligibility · recommender · pricing<br/>HMAC-signed, versioned quotes"]
-    checkout["Checkout<br/>mock OTP · consent ledger<br/>idempotent orders · mock payments"]
+    adv["Advisor<br/>3-question planner · guided-form fallback<br/>city names in any script · PII redactor · explanation verifier"]
+    engines["Domain engines (pure)<br/>eligibility · recommender + micro Starter plan · pricing<br/>HMAC-signed, versioned quotes"]
+    checkout["Quote & checkout<br/>price change per toggle · 12/24 months · share link<br/>mock OTP · consent ledger · idempotent orders"]
   end
 
   subgraph verify["Verify & activate"]
-    kyc["Smart KYC<br/>upload guard → quality gates → OCR<br/>checksums · registry cross-checks<br/>verdict + plain-language fixes"]
-    lookups["GSTIN / Udyam lookups (mock)"]
-    orders["Order tracker<br/>state machine · ETA · 21-day SLA<br/>WhatsApp → SMS updates (mock)"]
+    kyc["Smart KYC · fastest path first<br/>online GSTIN/Udyam check → DigiLocker → photo<br/>quality gates · OCR · checksums · cross-checks · plain fixes"]
+    lookups["GSTIN / Udyam registry lookups (mock)"]
+    digi["DigiLocker (mock)<br/>issuer-signed ID / Udyam, no OCR"]:::ext
+    esign["e-sign (mock Aadhaar OTP)<br/>SHA-256 of the order form"]
+    orders["Order tracker<br/>what happens next · install slot booking<br/>21-day SLA · late-order call back · WhatsApp → SMS (mock)"]
+    pay["Mock payments<br/>setup + first month · retry, no double charge"]
   end
 
   subgraph run["Operate & protect"]
-    bo["Back office<br/>RBAC · partner scoping · logged reveal<br/>review queue · unclosed sessions · call list"]
-    prop["Propensity model<br/>pre-contact features only"]
-    privacy["Privacy rights<br/>export · correct · withdraw · erase"]
+    bo["Back office<br/>RBAC · partner scoping · logged reveal · review queue<br/>one call list · plain stall reasons · call outcomes"]
+    prop["Scoring<br/>cold leads: propensity model (pre-contact features)<br/>app journeys: conversion of leads that got as far"]
+    privacy["My data (DPDP rights)<br/>masked summary · export · correct · withdraw · erase"]
   end
 
   gw --> adv & checkout & kyc & orders & bo & privacy
@@ -39,7 +47,9 @@ flowchart TB
   checkout --> engines
   checkout --> orders
   kyc --> lookups
+  kyc -->|"owner says Allow"| digi
   kyc -->|"verdict"| orders
+  orders --> esign --> pay
   bo --> prop
   bo -->|"approve / reject"| kyc
 
@@ -48,18 +58,18 @@ flowchart TB
   adv -->|"redacted chat text only"| groq
   kyc -->|"images never leave the server"| tess
 
-  csv[("Read-only dataset<br/>catalogue · registries · leads")]:::store
-  db[("App DB<br/>sessions · quotes · orders<br/>consent ledger · hash-chained audit")]:::store
+  csv[("Read-only dataset<br/>catalogue · registries · 5,000 leads")]:::store
+  db[("App DB<br/>sessions · quotes · share-link hashes · orders · slots<br/>e-sign hashes · call outcomes · consent ledger · hash-chained audit")]:::store
   vault[("PII vault<br/>per-person AES-256-GCM keys")]:::pii
   blobs[("Encrypted KYC images")]:::pii
 
   engines & lookups & prop --> csv
-  checkout & orders & bo --> db
+  checkout & orders & bo & esign --> db
   kyc -->|"sealed extractions"| vault
   kyc -->|"sealed images"| blobs
   privacy -->|"erasure = crypto-shred"| vault
 
   retention["retention_job · daily<br/>images deleted 7 days after journey end"]:::job
-  sla["sla_scan · scheduled<br/>breach → OPS alert"]:::job
+  sla["sla_scan · scheduled<br/>day 21 → apology, new date, OPS alert"]:::job
   retention --> blobs
   sla --> orders
