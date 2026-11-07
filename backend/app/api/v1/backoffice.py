@@ -5,6 +5,7 @@
 * ``GET /leads`` — "call next": unconverted leads ranked by propensity, masked.
 * ``GET /sessions`` — unclosed advisor journeys with their stall reason (J1).
 * ``POST /assignments`` — give a lead / session to a partner firm (``sales``, ``admin``).
+* ``POST /calls`` — log how a call went (audited; partners only for their own leads).
 * ``GET /review-queue`` · ``POST /review/{item_id}`` — KYC review and hand-offs (J7).
 * ``GET /sla-breaches`` · ``POST /orders/{id}/fulfilment`` (``admin``).
 * ``POST /reveal`` — open masked PII with a reason; audited (AC-04). ``no-store``.
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 import threading
 from datetime import timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -36,7 +37,7 @@ from app.backoffice.views import (
     load_or_train,
 )
 from app.config import Clock, get_clock
-from app.db.models import LeadKind, OrderState, ReviewKind, StaffUser
+from app.db.models import CallResult, LeadKind, OrderState, ReviewKind, StaffUser
 from app.domain.dataset import load_dataset
 from app.security.principal import InvalidPrincipalTokenError
 
@@ -45,6 +46,8 @@ _build_lock = threading.Lock()
 
 Db = Annotated[Session, Depends(get_db)]
 ClockDep = Annotated[Clock, Depends(get_clock)]
+# Back office is English / Hindi: the language KYC fix sentences are written in.
+Lang = Annotated[Literal["en", "hi"], Query()]
 
 
 def backoffice_service(request: Request) -> BackofficeService:
@@ -149,14 +152,17 @@ def model(staff: StaffDep, service: Service) -> dict[str, Any]:
 
 @router.get("/leads")
 def leads(
+    request: Request,
     staff: StaffDep,
     service: Service,
     db: Db,
+    clock: ClockDep,
     segment: Annotated[str | None, Query(pattern="^(micro|prof|multi|mfg)$")] = None,
     source: Annotated[str | None, Query(max_length=40)] = None,
     unassigned: bool = False,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
+    lang: Lang = "en",
 ) -> dict[str, Any]:
     try:
         return service.call_list(
@@ -167,6 +173,9 @@ def leads(
             unassigned=unassigned,
             limit=limit,
             offset=offset,
+            clock=clock,
+            idle_minutes=request.app.state.settings.backoffice_idle_minutes,
+            lang=lang,
         )
     except BackofficeError as exc:
         raise _fail(exc) from None
@@ -180,11 +189,12 @@ def sessions(
     db: Db,
     clock: ClockDep,
     idle_minutes: Annotated[int | None, Query(ge=0, le=60 * 24 * 90)] = None,
+    lang: Lang = "en",
 ) -> dict[str, Any]:
     default_idle: int = request.app.state.settings.backoffice_idle_minutes
     idle = default_idle if idle_minutes is None else idle_minutes
     try:
-        return service.sessions(db, clock, staff, idle_minutes=idle)
+        return service.sessions(db, clock, staff, idle_minutes=idle, lang=lang)
     except BackofficeError as exc:
         raise _fail(exc) from None
 
@@ -203,6 +213,24 @@ def assign(
 ) -> dict[str, Any]:
     try:
         return service.assign(db, clock, staff, body.kind, body.ref, body.partner_id)
+    except BackofficeError as exc:
+        raise _fail(exc) from None
+
+
+class CallLog(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: LeadKind
+    ref: Annotated[str, Field(min_length=1, max_length=36)]
+    outcome: CallResult
+
+
+@router.post("/calls")
+def log_call(
+    body: CallLog, staff: StaffDep, service: Service, db: Db, clock: ClockDep
+) -> dict[str, Any]:
+    try:
+        return service.log_call(db, clock, staff, body.kind, body.ref, body.outcome)
     except BackofficeError as exc:
         raise _fail(exc) from None
 

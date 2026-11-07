@@ -40,12 +40,15 @@ export function VoiceButton({
   t,
   onText,
   onError,
+  onStart,
 }: {
   locale: Locale;
   t: Messages;
   onText: (text: string) => void;
   /** A message to show the owner, or `null` to clear it. */
   onError: (message: string | null) => void;
+  /** Called as listening starts (e.g. to stop reading a reply aloud into the mic). */
+  onStart?: () => void;
 }) {
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
@@ -77,6 +80,7 @@ export function VoiceButton({
       onError(failure(event.error, t));
     };
     ref.current = rec;
+    onStart?.();
     onError(null);
     setListening(true);
     try {

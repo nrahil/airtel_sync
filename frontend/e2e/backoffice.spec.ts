@@ -133,7 +133,7 @@ test("sales: ranked call list, masked until a reasoned, logged reveal", async ({
   const lead = page.getByTestId("lead");
   await expect(lead).toContainText("31%");
   await expect(lead).toContainText("S. D. C.");
-  await expect(lead).toContainText("▲ lead source = Referral");
+  await expect(lead).toContainText("Came via Referral"); // plain words, not codes (Phase 6)
   await expect(page.getByText("Rohan Kulkarni")).toHaveCount(0);
 
   await lead.getByRole("button", { name: "Show details" }).click();
@@ -183,4 +183,134 @@ test("SLA breaches flag a late order whose owner asked for a call", async ({ pag
   const row = page.getByTestId("sla-order");
   await expect(row).toContainText("Day 22");
   await expect(row.getByTestId("sla-call-me")).toHaveText("Owner asked us to call — call first");
+});
+
+
+// ------------------------------------------------------------------ Round 2 Phase 6: a back office that says why
+
+const APP_SESSION = {
+  session_id: "5e5510n0-0000-4000-8000-000000000001",
+  status: "CHECKOUT",
+  stall_reason: "KYC_ACTION_NEEDED",
+  at_question: null,
+  idle_minutes: 95,
+  updated_at: "2026-07-15T09:00:00+05:30",
+  locale: "hi",
+  turns: 4,
+  profile: { business_type: "Kirana", segment: "micro", city: "Surat", employee_count: 4 },
+  monthly_total_paise: 347100,
+  order_id: "o-1",
+  order_state: "KYC_ACTION_NEEDED",
+  contactable: true,
+  callback_requested_at: null,
+  stuck_at: "KYC_ACTION_NEEDED",
+  detail: {
+    kyc_fixes: ["Your electricity bill is dated 31 Oct 2025, more than 90 days ago. Please upload a bill dated on or after 16 Apr 2026."],
+    kyc_attempts: 2,
+  },
+  last_call: null,
+  assigned_partner: null,
+  score: 0.44,
+  factors: [{ feature: "journey_stage", value: "Quote accepted", effect: 2.23 }],
+  basis: { stage: "Quote accepted", segment: "micro", rate: 0.44, n: 325 },
+};
+
+const CALLBACK_SESSION = {
+  ...APP_SESSION,
+  session_id: "5e5510n0-0000-4000-8000-000000000002",
+  stall_reason: "CALLBACK_REQUESTED",
+  stuck_at: "QUOTE_NOT_ACCEPTED",
+  callback_requested_at: "2026-07-15T10:30:00+05:30",
+  order_id: null,
+  order_state: null,
+  detail: {},
+  score: 0.05,
+  factors: [],
+};
+
+async function mockPhase6(page: Page) {
+  const calls: unknown[] = [];
+  let leads = [LEAD];
+  await page.route("**/api/v1/backoffice/**", async (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const path = url.pathname.replace("/api/v1/backoffice", "");
+    if (path === "/me") return route.fulfill({ json: me("sales") });
+    if (path === "/leads") {
+      return route.fulfill({
+        json: { total: leads.length, offset: 0, limit: 25, model_available: true, leads, sessions: [APP_SESSION, CALLBACK_SESSION], lang: url.searchParams.get("lang") },
+      });
+    }
+    if (path === "/calls") {
+      const body = req.postDataJSON() as { outcome: string };
+      calls.push(body);
+      const closed = body.outcome === "NOT_INTERESTED";
+      if (closed) leads = [];
+      else leads = [{ ...LEAD, last_call: { outcome: body.outcome, at: "2026-07-15T11:00:00+05:30", by: "sales" } } as typeof LEAD];
+      return route.fulfill({ json: { kind: "LEAD", ref: LEAD.lead_id, last_call: null, closed, callback_cleared: false } });
+    }
+    return route.fulfill({ status: 404, json: { detail: { code: "NOT_FOUND" } } });
+  });
+  return calls;
+}
+
+test("one call list: callbacks first, then leads and app journeys by likelihood, in plain words", async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem("udyam.staff", "s1.s_test.1.sig"));
+  await mockPhase6(page);
+  await page.goto("/en/backoffice");
+  const list = page.getByTestId("leads");
+  await expect(list).toContainText("1 leads + 2 from the app, best first");
+
+  // Order: the "call me" owner (5%) first, then by score: app journey 44%, lead 31%.
+  const cards = list.locator('[data-testid="lead"], [data-testid="session"]');
+  await expect(cards).toHaveCount(3);
+  await expect(cards.nth(0)).toHaveAttribute("data-callback", "true");
+  await expect(cards.nth(0)).toContainText("Asked us to call them — call first");
+  await expect(cards.nth(0)).toContainText("Before that: Opened the quote, didn't accept");
+  await expect(cards.nth(1)).toContainText("44%");
+  await expect(cards.nth(1)).toContainText("From the app");
+  await expect(cards.nth(2)).toContainText("31%");
+
+  // What exactly went wrong, not a code.
+  const app = cards.nth(1);
+  await expect(app.getByTestId("stall")).toHaveText("KYC needs a fix");
+  await expect(app.getByTestId("kyc-detail")).toContainText("Your electricity bill is dated 31 Oct 2025");
+  await expect(app.getByTestId("kyc-detail")).toContainText("2 failed tries so far");
+  await expect(app.getByTestId("saw-price")).toHaveText("Last price they saw: ₹3,471/month");
+  await expect(app.getByTestId("factors")).toContainText("Placed an order");
+  await expect(app.getByTestId("basis")).toHaveText("Of 325 businesses like this that got this far, 44% went live");
+
+  // Score reasons in words a caller would say.
+  const lead = cards.nth(2);
+  await expect(lead.getByTestId("factors")).toContainText("Came via Referral");
+  await expect(lead.getByTestId("factors")).toContainText("GSTIN active");
+  await expect(lead.getByTestId("factors")).not.toContainText("lead_source");
+  await expect(lead.getByTestId("factors")).not.toContainText("=");
+});
+
+test("logging a call: shown on the row, and 'not interested' takes it off the list", async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem("udyam.staff", "s1.s_test.1.sig"));
+  const calls = await mockPhase6(page);
+  await page.goto("/en/backoffice");
+  const lead = page.getByTestId("lead");
+  const log = lead.getByTestId("call-log");
+  await log.getByLabel("How did the call go?").selectOption("NO_ANSWER");
+  await log.getByRole("button", { name: "Log call" }).click();
+  expect(calls.at(-1)).toEqual({ kind: "LEAD", ref: "L00042", outcome: "NO_ANSWER" });
+  await expect(lead.getByTestId("last-call")).toContainText("Last call: No answer");
+  await expect(lead.getByTestId("last-call")).toContainText("sales");
+
+  await lead.getByTestId("call-log").getByLabel("How did the call go?").selectOption("NOT_INTERESTED");
+  await lead.getByTestId("call-log").getByRole("button", { name: "Log call" }).click();
+  await expect(page.getByTestId("lead")).toHaveCount(0);
+});
+
+test("Hindi back office asks for Hindi KYC fixes and says the factors in Hindi", async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem("udyam.staff", "s1.s_test.1.sig"));
+  await mockPhase6(page);
+  const asked = page.waitForRequest((r) => r.url().includes("/backoffice/leads"));
+  await page.goto("/hi/backoffice");
+  expect(new URL((await asked).url()).searchParams.get("lang")).toBe("hi");
+  await expect(page.getByTestId("lead").getByTestId("factors")).toContainText("GSTIN चालू");
+  await expect(page.getByTestId("session").first()).toContainText("कॉल करने को कहा — पहले कॉल करें");
 });

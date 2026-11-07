@@ -4,7 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ApiError } from "@/lib/api";
 import {
+  CALL_OUTCOMES,
+  type CallOutcome,
   type Factor,
+  type LastCall,
   type LeadRow,
   type ModelView,
   REVEAL_REASONS,
@@ -13,6 +16,7 @@ import {
   type RevealReason,
   type SessionRow,
   type SlaRow,
+  type StaffLang,
   type StaffMe,
   bo,
   getStaffToken,
@@ -45,7 +49,8 @@ const card = "rounded-2xl bg-white p-4 shadow-sm ring-1 ring-neutral-200 dark:bg
 const button = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
 
 /** Staff console: sign-in, then the tabs this role may use. PII stays masked until revealed. */
-export function Backoffice({ t }: { locale: Locale; t: T }) {
+export function Backoffice({ locale, t }: { locale: Locale; t: T }) {
+  const lang: StaffLang = locale === "hi" ? "hi" : "en";
   const [me, setMe] = useState<StaffMe | null>(null);
   const [checking, setChecking] = useState(true);
   const [tab, setTab] = useState<Tab | null>(null);
@@ -103,8 +108,8 @@ export function Backoffice({ t }: { locale: Locale; t: T }) {
           </button>
         ))}
       </nav>
-      {tab === "leads" && <Leads t={t} me={me} />}
-      {tab === "sessions" && <Sessions t={t} me={me} />}
+      {tab === "leads" && <Leads t={t} me={me} lang={lang} />}
+      {tab === "sessions" && <Sessions t={t} me={me} lang={lang} />}
       {tab === "review" && <Review t={t} />}
       {tab === "sla" && <Sla t={t} me={me} />}
       {tab === "model" && <Model t={t} />}
@@ -210,18 +215,107 @@ function Login({ t, onSignedIn }: { t: T; onSignedIn: (me: StaffMe) => void }) {
 
 // ------------------------------------------------------------------ shared pieces
 
+/** "GSTIN active", "Came via Referral", "12 staff": a factor as a caller would say it. */
+function factorText(f: Factor, t: T): string {
+  const x = t.factors;
+  const pick = (table: Record<string, string>) => table[f.value] ?? f.value;
+  switch (f.feature) {
+    case "segment":
+      return pick(x.segment);
+    case "gstin_status":
+      return pick(x.gstin_status);
+    case "has_udyam":
+      return pick(x.has_udyam);
+    case "journey_stage":
+      return pick(x.journey_stage);
+    case "current_internet":
+      return f.value === "None" ? x.noInternet : fill(x.current_internet, { v: f.value });
+    case "current_provider":
+      return f.value === "None" ? x.noProvider : fill(x.current_provider, { v: f.value });
+    default: {
+      const template = (x as unknown as Record<string, unknown>)[f.feature];
+      return typeof template === "string" ? fill(template, { v: f.value }) : `${f.feature}: ${f.value}`;
+    }
+  }
+}
+
 function Factors({ factors, t }: { factors: Factor[]; t: T }) {
   if (!factors.length) return null;
   return (
-    <p className="text-xs text-neutral-600 dark:text-neutral-300">
+    <p className="text-xs text-neutral-600 dark:text-neutral-300" data-testid="factors">
       {t.leads.why}:{" "}
-      {factors.map((f, i) => (
-        <span key={f.feature} className={f.effect > 0 ? "text-green-700" : "text-red-700"}>
-          {i > 0 ? " · " : ""}
-          {f.effect > 0 ? "▲" : "▼"} {f.feature.replaceAll("_", " ")} = {f.value}
-        </span>
-      ))}
+      {factors.map((f, i) => {
+        const up = f.effect > 0;
+        return (
+          <span key={f.feature} className={up ? "text-green-700" : "text-red-700"} title={up ? t.factors.up : t.factors.down}>
+            {i > 0 ? " · " : ""}
+            <span aria-hidden="true">{up ? "▲" : "▼"}</span>
+            <span className="sr-only">{up ? t.factors.up : t.factors.down}: </span> {factorText(f, t)}
+          </span>
+        );
+      })}
     </p>
+  );
+}
+
+function LastCallLine({ call, t, lang }: { call?: LastCall | null; t: T; lang: StaffLang }) {
+  if (!call) return null;
+  const when = new Intl.DateTimeFormat(lang === "hi" ? "hi-IN-u-nu-latn" : "en-IN", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(call.at));
+  return (
+    <p className="text-xs text-neutral-600 dark:text-neutral-300" data-testid="last-call">
+      {fill(t.calls.last, { outcome: t.calls.outcomes[call.outcome] ?? call.outcome, when, by: call.by })}
+    </p>
+  );
+}
+
+/** Log how a call went (audited; "not interested" / "wrong number" take the row off the list). */
+function CallLog({ kind, refId, t, onDone }: { kind: "LEAD" | "SESSION"; refId: string; t: T; onDone: () => void }) {
+  const [outcome, setOutcome] = useState<CallOutcome>("REACHED_INTERESTED");
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const res = await bo.logCall(kind, refId, outcome);
+      setMessage(res.closed ? t.calls.closed : fill(t.calls.logged, { outcome: t.calls.outcomes[outcome] }));
+      onDone();
+    } catch {
+      setMessage(t.error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="call-log">
+      <label className="flex items-center gap-1">
+        {t.calls.label}
+        <select
+          className="rounded-lg border border-neutral-300 px-2 py-1"
+          value={outcome}
+          onChange={(e) => setOutcome(e.target.value as CallOutcome)}
+        >
+          {CALL_OUTCOMES.map((o) => (
+            <option key={o} value={o}>
+              {t.calls.outcomes[o]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="button" disabled={busy} className={`${button} border border-neutral-300`} onClick={() => void save()}>
+        {t.calls.log}
+      </button>
+      {message && (
+        <span role="status" className="text-neutral-600">
+          {message}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -334,18 +428,35 @@ function Assign({ kind, refId, current, t, onDone }: { kind: "LEAD" | "SESSION";
 
 // ------------------------------------------------------------------ tabs
 
-function Leads({ t, me }: { t: T; me: StaffMe }) {
+type CallRow =
+  | { kind: "lead"; key: string; score: number; lead: LeadRow }
+  | { kind: "session"; key: string; score: number; session: SessionRow };
+
+/**
+ * One call list: owners who asked for a call first, then historic leads and the app's
+ * own unfinished journeys together, by likelihood.
+ */
+function Leads({ t, me, lang }: { t: T; me: StaffMe; lang: StaffLang }) {
   const [unassigned, setUnassigned] = useState(false);
   const [limit, setLimit] = useState(25);
-  const fetcher = useCallback(() => bo.leads({ unassigned, limit }), [unassigned, limit]);
+  const fetcher = useCallback(() => bo.leads({ unassigned, limit, lang }), [unassigned, limit, lang]);
   const { data, problem, reload } = useLoad(fetcher, t);
   const canAssign = me.permissions.includes("leads:assign");
 
   if (!data) return <Status problem={problem} t={t} />;
+  const live = data.sessions ?? [];
+  const asRow = (s: SessionRow): CallRow => ({ kind: "session", key: s.session_id, score: s.score ?? 0, session: s });
+  const ranked: CallRow[] = [
+    ...live.filter((s) => !s.callback_requested_at).map(asRow),
+    ...data.leads.map((lead): CallRow => ({ kind: "lead", key: lead.lead_id, score: lead.score ?? 0, lead })),
+  ].sort((a, b) => b.score - a.score);
+  const rows: CallRow[] = [...live.filter((s) => s.callback_requested_at).map(asRow), ...ranked];
   return (
     <section className="flex flex-col gap-3" data-testid="leads">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-medium">{fill(t.leads.total, { n: data.total })}</p>
+        <p className="text-sm font-medium">
+          {live.length ? fill(t.leads.totalWithApp, { n: data.total, m: live.length }) : fill(t.leads.total, { n: data.total })}
+        </p>
         {canAssign && (
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={unassigned} onChange={(e) => setUnassigned(e.target.checked)} />
@@ -354,34 +465,15 @@ function Leads({ t, me }: { t: T; me: StaffMe }) {
         )}
       </div>
       {!data.model_available && <p className="text-sm text-amber-700">{t.leads.noModel}</p>}
-      {data.leads.length === 0 && <p>{t.empty}</p>}
+      {rows.length === 0 && <p>{t.empty}</p>}
       <ul className="flex flex-col gap-3">
-        {data.leads.map((lead: LeadRow) => (
-          <li key={lead.lead_id} className={`${card} flex flex-col gap-2`} data-testid="lead">
-            <div className="flex flex-wrap items-center gap-2">
-              <Score score={lead.score} t={t} />
-              <span className="font-mono text-xs text-neutral-500">{lead.lead_id}</span>
-              <span className="font-semibold">{lead.business_name}</span>
-              <span className="text-sm text-neutral-600 dark:text-neutral-300">
-                {lead.business_type} · {lead.city} · {lead.lead_source}
-              </span>
-            </div>
-            <p className="text-sm">
-              {lead.contact_name} ({lead.contact_role}) · {lead.preferred_language} · {lead.employees} / {lead.sites} · GSTIN{" "}
-              {lead.gstin ?? "—"} ({lead.gstin_status})
-            </p>
-            <p className="text-xs text-neutral-500">
-              {fill(t.leads.stage, { stage: lead.stage_reached })}
-              {lead.drop_reason ? ` — ${lead.drop_reason}` : ""}
-              {lead.assigned_partner ? ` · ${fill(t.leads.assigned, { partner: lead.assigned_partner })}` : ""}
-            </p>
-            <Factors factors={lead.factors} t={t} />
-            <div className="flex flex-wrap gap-3">
-              <Reveal kind="LEAD" refId={lead.lead_id} t={t} />
-              {canAssign && <Assign kind="LEAD" refId={lead.lead_id} current={lead.assigned_partner} t={t} onDone={() => void reload()} />}
-            </div>
-          </li>
-        ))}
+        {rows.map((row) =>
+          row.kind === "session" ? (
+            <SessionCard key={row.key} s={row.session} t={t} lang={lang} canAssign={canAssign} fromApp onChange={() => void reload()} />
+          ) : (
+            <LeadCard key={row.key} lead={row.lead} t={t} lang={lang} canAssign={canAssign} onChange={() => void reload()} />
+          ),
+        )}
       </ul>
       {data.total > data.leads.length && (
         <button type="button" className={`${button} self-start border border-neutral-300`} onClick={() => setLimit((n) => Math.min(100, n + 25))}>
@@ -392,8 +484,119 @@ function Leads({ t, me }: { t: T; me: StaffMe }) {
   );
 }
 
-function Sessions({ t, me }: { t: T; me: StaffMe }) {
-  const fetcher = useCallback(() => bo.sessions(), []);
+function LeadCard(props: { lead: LeadRow; t: T; lang: StaffLang; canAssign: boolean; onChange: () => void }) {
+  const { lead, t, lang, canAssign, onChange } = props;
+  return (
+    <li className={`${card} flex flex-col gap-2`} data-testid="lead">
+      <div className="flex flex-wrap items-center gap-2">
+        <Score score={lead.score} t={t} />
+        <span className="font-mono text-xs text-neutral-500">{lead.lead_id}</span>
+        <span className="font-semibold">{lead.business_name}</span>
+        <span className="text-sm text-neutral-600 dark:text-neutral-300">
+          {lead.business_type} · {lead.city} · {lead.lead_source}
+        </span>
+      </div>
+      <p className="text-sm">
+        {lead.contact_name} ({lead.contact_role}) · {lead.preferred_language} · {lead.employees} / {lead.sites} · GSTIN{" "}
+        {lead.gstin ?? "—"} ({lead.gstin_status})
+      </p>
+      <p className="text-xs text-neutral-500">
+        {fill(t.leads.stage, { stage: lead.stage_reached })}
+        {lead.drop_reason ? ` — ${lead.drop_reason}` : ""}
+        {lead.assigned_partner ? ` · ${fill(t.leads.assigned, { partner: lead.assigned_partner })}` : ""}
+      </p>
+      <Factors factors={lead.factors} t={t} />
+      <LastCallLine call={lead.last_call} t={t} lang={lang} />
+      <div className="flex flex-wrap gap-3">
+        <Reveal kind="LEAD" refId={lead.lead_id} t={t} />
+        <CallLog kind="LEAD" refId={lead.lead_id} t={t} onDone={onChange} />
+        {canAssign && <Assign kind="LEAD" refId={lead.lead_id} current={lead.assigned_partner} t={t} onDone={onChange} />}
+      </div>
+    </li>
+  );
+}
+
+function SessionCard(props: {
+  s: SessionRow;
+  t: T;
+  lang: StaffLang;
+  canAssign: boolean;
+  fromApp?: boolean;
+  onChange: () => void;
+}) {
+  const { s, t, lang, canAssign, fromApp, onChange } = props;
+  const reason = (code: string) => t.sessions.reasons[code] ?? code;
+  const detail = s.detail ?? {};
+  const profile = [
+    s.profile.business_type,
+    s.profile.city,
+    s.profile.employee_count ? fill(t.factors.employees, { v: String(s.profile.employee_count) }) : null,
+  ].filter(Boolean);
+  return (
+    <li
+      className={`${card} flex flex-col gap-2 ${s.callback_requested_at ? "ring-2 ring-red-700" : ""}`}
+      data-testid="session"
+      data-callback={s.callback_requested_at ? "true" : undefined}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <Score score={s.score} t={t} />
+        {fromApp && <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-950 dark:text-red-100">{t.leads.fromApp}</span>}
+        <span className="font-semibold" data-testid="stall">{reason(s.stall_reason)}</span>
+        <span className="text-xs text-neutral-500">
+          {fill(t.sessions.idle, { n: s.idle_minutes })} · {s.locale}
+        </span>
+      </div>
+      {s.callback_requested_at && s.stuck_at && (
+        <p className="text-sm">{fill(t.sessions.stuckAt, { reason: reason(s.stuck_at) })}</p>
+      )}
+      {profile.length > 0 && <p className="text-sm text-neutral-600 dark:text-neutral-300">{profile.join(" · ")}</p>}
+      {s.monthly_total_paise !== null && (
+        <p className="text-sm" data-testid="saw-price">
+          {fill(t.sessions.sawPrice, { amount: formatPaise(s.monthly_total_paise) })}
+        </p>
+      )}
+      {s.at_question && (
+        <p className="text-xs text-neutral-500">{fill(t.sessions.atQuestion, { slot: t.slots[s.at_question] ?? s.at_question })}</p>
+      )}
+      {detail.kyc_fixes && detail.kyc_fixes.length > 0 && (
+        <div className="rounded-lg bg-amber-50 p-2 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-50" data-testid="kyc-detail">
+          <ul className="list-disc ps-5">
+            {detail.kyc_fixes.map((fix) => (
+              <li key={fix}>{fix}</li>
+            ))}
+          </ul>
+          {detail.kyc_attempts ? <p className="text-xs">{fill(t.sessions.kycAttempts, { n: detail.kyc_attempts })}</p> : null}
+        </div>
+      )}
+      {detail.failed_payments ? (
+        <p className="text-sm" data-testid="payment-detail">
+          {fill(t.sessions.failedPayments, { n: detail.failed_payments })}
+        </p>
+      ) : null}
+      <Factors factors={s.factors} t={t} />
+      {s.basis && (
+        <p className="text-xs text-neutral-500" data-testid="basis">
+          {fill(t.sessions.basis, { n: s.basis.n, pct: Math.round(s.basis.rate * 100) })}
+        </p>
+      )}
+      <LastCallLine call={s.last_call} t={t} lang={lang} />
+      <div className="flex flex-wrap items-center gap-3">
+        {s.contactable ? (
+          <>
+            <Reveal kind="SESSION" refId={s.session_id} t={t} />
+            <CallLog kind="SESSION" refId={s.session_id} t={t} onDone={onChange} />
+          </>
+        ) : (
+          <span className="text-xs text-neutral-500">{t.sessions.anonymous}</span>
+        )}
+        {canAssign && <Assign kind="SESSION" refId={s.session_id} current={s.assigned_partner} t={t} onDone={onChange} />}
+      </div>
+    </li>
+  );
+}
+
+function Sessions({ t, me, lang }: { t: T; me: StaffMe; lang: StaffLang }) {
+  const fetcher = useCallback(() => bo.sessions(undefined, lang), [lang]);
   const { data, problem, reload } = useLoad(fetcher, t);
   const canAssign = me.permissions.includes("leads:assign");
   if (!data) return <Status problem={problem} t={t} />;
@@ -402,33 +605,7 @@ function Sessions({ t, me }: { t: T; me: StaffMe }) {
       {data.sessions.length === 0 && <p>{t.empty}</p>}
       <ul className="flex flex-col gap-3">
         {data.sessions.map((s: SessionRow) => (
-          <li
-            key={s.session_id}
-            className={`${card} flex flex-col gap-2 ${s.callback_requested_at ? "ring-2 ring-red-700" : ""}`}
-            data-testid="session"
-            data-callback={s.callback_requested_at ? "true" : undefined}
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <Score score={s.score} t={t} />
-              <span className="font-semibold">{t.sessions.reasons[s.stall_reason] ?? s.stall_reason}</span>
-              <span className="text-xs text-neutral-500">
-                {fill(t.sessions.idle, { n: s.idle_minutes })} · {s.locale}
-              </span>
-            </div>
-            <p className="text-sm text-neutral-600 dark:text-neutral-300">
-              {[s.profile.business_type, s.profile.segment, s.profile.city, s.profile.employee_count && `${String(s.profile.employee_count)} staff`]
-                .filter(Boolean)
-                .join(" · ")}
-              {s.monthly_total_paise !== null ? ` · ${formatPaise(s.monthly_total_paise)}/mo` : ""}
-            </p>
-            {s.at_question && <p className="text-xs text-neutral-500">{fill(t.sessions.atQuestion, { slot: s.at_question })}</p>}
-            {s.order_state && <p className="text-xs text-neutral-500">{fill(t.sessions.order, { state: s.order_state })}</p>}
-            <Factors factors={s.factors} t={t} />
-            <div className="flex flex-wrap items-center gap-3">
-              {s.contactable ? <Reveal kind="SESSION" refId={s.session_id} t={t} /> : <span className="text-xs text-neutral-500">{t.sessions.anonymous}</span>}
-              {canAssign && <Assign kind="SESSION" refId={s.session_id} current={s.assigned_partner} t={t} onDone={() => void reload()} />}
-            </div>
-          </li>
+          <SessionCard key={s.session_id} s={s} t={t} lang={lang} canAssign={canAssign} onChange={() => void reload()} />
         ))}
       </ul>
     </section>

@@ -18,6 +18,19 @@ export interface Factor {
   effect: number;
 }
 
+/** The latest logged call on a lead or session. */
+export interface LastCall {
+  outcome: CallOutcome;
+  at: string;
+  by: string;
+}
+
+export type CallOutcome = "REACHED_INTERESTED" | "CALL_BACK_LATER" | "NO_ANSWER" | "NOT_INTERESTED" | "WRONG_NUMBER";
+export const CALL_OUTCOMES: CallOutcome[] = ["REACHED_INTERESTED", "CALL_BACK_LATER", "NO_ANSWER", "NOT_INTERESTED", "WRONG_NUMBER"];
+
+/** Back office speaks English or Hindi (the languages KYC fixes are written in). */
+export type StaffLang = "en" | "hi";
+
 export interface LeadRow {
   lead_id: string;
   created_date: string;
@@ -39,6 +52,7 @@ export interface LeadRow {
   stage_reached: string;
   drop_reason: string | null;
   assigned_partner: string | null;
+  last_call?: LastCall | null;
   score: number | null;
   factors: Factor[];
 }
@@ -59,6 +73,13 @@ export interface SessionRow {
   contactable: boolean;
   /** The owner asked to be called (shown first). */
   callback_requested_at?: string | null;
+  /** Why the journey stopped (kept when "call me" puts it on top). */
+  stuck_at?: string | null;
+  /** Exactly what went wrong: KYC fix sentences, failed payments. */
+  detail?: { kyc_fixes?: string[]; kyc_attempts?: number; failed_payments?: number };
+  last_call?: LastCall | null;
+  /** The score of an app journey: how historic leads that got as far went on. */
+  basis?: { stage: string; segment: string | null; rate: number; n: number } | null;
   assigned_partner: string | null;
   score: number | null;
   factors: Factor[];
@@ -162,13 +183,26 @@ export const bo = {
     call<StaffMe & { token: string; expires_in_seconds: number }>("POST", "/auth/login", { username, password }),
   me: () => call<StaffMe>("GET", "/me"),
   model: () => call<ModelView>("GET", "/model"),
-  leads: (p: { segment?: string; source?: string; unassigned?: boolean; offset?: number; limit?: number } = {}) =>
-    call<{ total: number; offset: number; limit: number; model_available: boolean; leads: LeadRow[] }>(
-      "GET",
-      `/leads${q(p)}`,
+  leads: (
+    p: { segment?: string; source?: string; unassigned?: boolean; offset?: number; limit?: number; lang?: StaffLang } = {},
+  ) =>
+    call<{
+      total: number;
+      offset: number;
+      limit: number;
+      model_available: boolean;
+      leads: LeadRow[];
+      /** Callable journeys from the app (first page only), merged into the same list. */
+      sessions?: SessionRow[];
+    }>("GET", `/leads${q(p)}`),
+  sessions: (idleMinutes?: number, lang?: StaffLang) =>
+    call<{ idle_minutes: number; sessions: SessionRow[] }>("GET", `/sessions${q({ idle_minutes: idleMinutes, lang })}`),
+  logCall: (kind: "LEAD" | "SESSION", ref: string, outcome: CallOutcome) =>
+    call<{ kind: string; ref: string; last_call: LastCall; closed: boolean; callback_cleared: boolean }>(
+      "POST",
+      "/calls",
+      { kind, ref, outcome },
     ),
-  sessions: (idleMinutes?: number) =>
-    call<{ idle_minutes: number; sessions: SessionRow[] }>("GET", `/sessions${q({ idle_minutes: idleMinutes })}`),
   assign: (kind: "LEAD" | "SESSION", ref: string, partnerId: string | null) =>
     call<{ kind: string; ref: string; partner_id: string | null }>("POST", "/assignments", {
       kind,

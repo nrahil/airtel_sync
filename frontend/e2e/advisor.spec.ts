@@ -477,3 +477,90 @@ test("the microphone is allowed for this site (Permissions-Policy)", async ({ re
   const res = await request.get("/en/advisor");
   expect(res.headers()["permissions-policy"]).toContain("microphone=(self)");
 });
+
+
+// ------------------------------------------------------------------ Round 2 Phase 6: spoken replies
+
+/** A stand-in for the browser's text-to-speech: records what would be said, and in which voice. */
+async function fakeTts(page: Page, voices: { lang: string; name: string }[]) {
+  await page.addInitScript((list) => {
+    const spoken: { text: string; lang: string }[] = [];
+    (window as unknown as { __spoken: typeof spoken }).__spoken = spoken;
+    class Utterance {
+      text: string;
+      lang = "";
+      rate = 1;
+      voice: { lang: string } | null = null;
+      constructor(text: string) {
+        this.text = text;
+      }
+    }
+    const synth = {
+      getVoices: () => list,
+      speak: (u: Utterance) => spoken.push({ text: u.text, lang: u.voice?.lang ?? u.lang }),
+      cancel: () => {
+        (window as unknown as { __cancelled: number }).__cancelled =
+          ((window as unknown as { __cancelled?: number }).__cancelled ?? 0) + 1;
+      },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    };
+    Object.defineProperty(window, "speechSynthesis", { value: synth, configurable: true });
+    (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = Utterance;
+  }, voices);
+}
+
+const spoken = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __spoken: { text: string; lang: string }[] }).__spoken);
+
+test("Speaker: replies are read aloud in Hindi once turned on, and it is remembered", async ({ page }) => {
+  await fakeTts(page, [
+    { lang: "en-US", name: "English" },
+    { lang: "hi-IN", name: "Hindi" },
+  ]);
+  await mockApi(page, (body) => {
+    if (body?.text) {
+      return turn({ messages: [{ role: "assistant", kind: "question", text: "आपकी दुकान किस शहर में है?" }] });
+    }
+    return turn({ messages: [{ role: "assistant", kind: "question", text: "आपका व्यवसाय किस तरह का है?" }] });
+  });
+  await page.goto("/hi/advisor");
+  await expect(page.getByTestId("transcript")).toContainText("आपका व्यवसाय किस तरह का है?");
+  expect(await spoken(page)).toEqual([]); // off until the owner asks
+
+  const toggle = page.getByTestId("speaker");
+  await expect(toggle).toHaveText(/जवाब बोलकर सुनाएँ/);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(toggle).toHaveText(/बोलना बंद करें/);
+  // Turning it on reads the question on screen, in a Hindi voice.
+  expect(await spoken(page)).toEqual([{ text: "आपका व्यवसाय किस तरह का है?", lang: "hi-IN" }]);
+
+  await page.locator("#advisor-input").fill("किराना");
+  await page.getByRole("button", { name: "भेजें", exact: true }).click();
+  await expect(page.getByTestId("transcript")).toContainText("आपकी दुकान किस शहर में है?");
+  expect((await spoken(page)).at(-1)).toEqual({ text: "आपकी दुकान किस शहर में है?", lang: "hi-IN" });
+  await expect(page.getByTestId("speaker-no-voice")).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.getByTestId("speaker")).toHaveAttribute("aria-pressed", "true");
+});
+
+test("Speaker: with no voice for the language it says so instead of reading gibberish", async ({ page }) => {
+  await fakeTts(page, [{ lang: "en-US", name: "English" }]);
+  await mockApi(page, () => turn({ messages: [{ role: "assistant", kind: "question", text: "आपका व्यवसाय किस तरह का है?" }] }));
+  await page.goto("/hi/advisor");
+  await page.getByTestId("speaker").click();
+  await expect(page.getByTestId("speaker-no-voice")).toContainText("इस फ़ोन में हिंदी आवाज़ नहीं है");
+  expect(await spoken(page)).toEqual([]);
+});
+
+test("Speaker: hidden where the browser can't speak", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "speechSynthesis", { value: undefined, configurable: true });
+  });
+  await mockApi(page, () => turn({}));
+  await page.goto("/en/advisor");
+  await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
+  await expect(page.getByTestId("speaker")).toHaveCount(0);
+});

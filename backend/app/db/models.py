@@ -196,6 +196,16 @@ class LeadKind(StrEnum):
     SESSION = "SESSION"  # advisor session (by UUID)
 
 
+class CallResult(StrEnum):
+    """What happened when staff called a lead or an advisor session (Round 2 Phase 6)."""
+
+    REACHED_INTERESTED = "REACHED_INTERESTED"
+    CALL_BACK_LATER = "CALL_BACK_LATER"
+    NO_ANSWER = "NO_ANSWER"
+    NOT_INTERESTED = "NOT_INTERESTED"
+    WRONG_NUMBER = "WRONG_NUMBER"
+
+
 class VaultField(StrEnum):
     NAME = "NAME"
     PHONE = "PHONE"
@@ -538,6 +548,20 @@ class LeadAssignment(Base):
     partner_id: Mapped[str] = mapped_column(String(40), index=True)
     assigned_by: Mapped[str] = mapped_column(String(64))
     assigned_at: Mapped[datetime] = mapped_column(default=_now)
+
+
+class CallOutcome(Base):
+    """One logged call to a lead or advisor session. Codes only: no notes, no numbers."""
+
+    __tablename__ = "call_outcomes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    lead_kind: Mapped[LeadKind] = mapped_column(_enum(LeadKind))
+    lead_ref: Mapped[str] = mapped_column(String(36), index=True)
+    outcome: Mapped[CallResult] = mapped_column(_enum(CallResult))
+    staff_id: Mapped[str] = mapped_column(String(36))
+    staff_username: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(default=_now)
 
 
 # ------------------------------------------------------------------ append-only logs

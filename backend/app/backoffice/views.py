@@ -10,6 +10,7 @@ in the query — not in the UI.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -17,31 +18,36 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.advisor.service import State
 from app.audit.log import AuditLog
 from app.backoffice.propensity import (
+    Factor,
     LeadFeatures,
     PropensityModel,
     Score,
     examples_from,
     gstin_state,
     lead_features,
-    session_features,
     train,
 )
 from app.backoffice.rbac import Perm, allowed, is_scoped
 from app.config import Clock
 from app.db.models import (
     AdvisorSession,
+    CallOutcome,
+    CallResult,
+    EsignRequest,
     KycApplication,
     KycReviewItem,
     LeadAssignment,
     LeadKind,
     Order,
     OrderState,
+    Payment,
+    PaymentStatus,
     PrincipalIdentity,
     Quote,
     QuoteStatus,
@@ -52,10 +58,12 @@ from app.db.models import (
     StaffUser,
 )
 from app.domain.dataset import Dataset
-from app.domain.leads import DropReason, Lead, Outcome
+from app.domain.leads import DropReason, Lead, Outcome, Stage
+from app.kyc.messages import fix_message
 from app.kyc.review_queue import ReviewItemNotFoundError, ReviewQueue
 from app.kyc.service import KycService
 from app.kyc.storage import BlobIntegrityError
+from app.kyc.types import Check, CheckStatus
 from app.orders.eta import CLOSED, age_days, sla_due
 from app.orders.notifications import OrderNotifier
 from app.orders.service import TrackerError, TrackerService
@@ -78,6 +86,13 @@ _ORDER_STALL: Final[Mapping[OrderState, str]] = {
     S.NOT_FEASIBLE: "NOT_FEASIBLE",
 }
 _SESSION_LIMIT: Final = 200
+# A call that ends the follow-up: the lead / session leaves the lists.
+CLOSING_CALLS: Final = frozenset({CallResult.NOT_INTERESTED, CallResult.WRONG_NUMBER})
+# A real conversation answers an owner's "call me" (no answer / "later" keeps it on top).
+ANSWERS_CALLBACK: Final = frozenset(
+    {CallResult.REACHED_INTERESTED, CallResult.NOT_INTERESTED, CallResult.WRONG_NUMBER}
+)
+_MAX_KYC_FIXES: Final = 3
 
 
 class BackofficeError(Exception):
@@ -181,6 +196,94 @@ def _since(then: datetime, now: datetime) -> int:
     return max(0, int((now - then).total_seconds() // 60))
 
 
+def _signed(order: Order) -> bool:
+    db = Session.object_session(order)
+    if db is None:
+        return False
+    found = db.scalar(
+        select(EsignRequest.id)
+        .where(EsignRequest.order_id == order.id, EsignRequest.status == "SIGNED")
+        .limit(1)
+    )
+    return found is not None
+
+
+def _call_view(call: CallOutcome | None) -> dict[str, Any] | None:
+    if call is None:
+        return None
+    return {
+        "outcome": call.outcome.value,
+        "at": call.created_at.isoformat(),
+        "by": call.staff_username,
+    }
+
+
+def _last_calls(db: Session, kind: LeadKind) -> dict[str, CallOutcome]:
+    latest: dict[str, CallOutcome] = {}
+    rows = db.scalars(
+        select(CallOutcome)
+        .where(CallOutcome.lead_kind == kind)
+        .order_by(CallOutcome.created_at, CallOutcome.id)
+    )
+    for row in rows:
+        latest[row.lead_ref] = row
+    return latest
+
+
+# ------------------------------------------------------------------ app journeys
+
+# How far an app journey got, in the funnel stages of the historic leads.
+_JOURNEY_STAGES: Final = (
+    Stage.CONTACTED,
+    Stage.NEEDS_ASSESSED,
+    Stage.QUOTE_ACCEPTED,
+    Stage.KYC_COMPLETE,
+)
+_PAST_KYC: Final = frozenset({S.KYC_VERIFIED, S.PAYMENT_FAILED})
+
+
+def journey_stage(session: AdvisorSession, order: Order | None) -> Stage:
+    """The furthest funnel step an app journey reached (talked → plan → order → KYC)."""
+    if order is not None and order.state is not S.CANCELLED:
+        return Stage.KYC_COMPLETE if order.state in _PAST_KYC else Stage.QUOTE_ACCEPTED
+    if session.status in (SessionStatus.QUOTED, SessionStatus.CHECKOUT):
+        return Stage.NEEDS_ASSESSED
+    return Stage.CONTACTED
+
+
+@dataclass(frozen=True, slots=True)
+class StageRate:
+    rate: float  # share of historic leads that reached the stage and went live
+    n: int  # how many historic leads that is based on
+
+
+def stage_rates(leads: Iterable[Lead]) -> dict[tuple[Stage, str | None], StageRate]:
+    """Activation rate of historic leads by furthest stage reached (and segment).
+
+    The propensity model sees only what is known *before* contact, which is right for
+    cold leads but undersells an owner who has already ordered: of the leads that
+    accepted a quote, 43% went live, against 7% overall. So app journeys are ranked by
+    what the data says about leads that got just as far.
+    """
+    rows = list(leads)
+    out: dict[tuple[Stage, str | None], StageRate] = {}
+    for stage in _JOURNEY_STAGES:
+        reached = [lead for lead in rows if lead.stage_reached.rank >= stage.rank]
+        groups: dict[str | None, list[Lead]] = {None: reached}
+        for lead in reached:
+            groups.setdefault(lead.segment.code.value, []).append(lead)
+        for segment, group in groups.items():
+            if group:
+                live = sum(lead.outcome is Outcome.ACTIVATED for lead in group)
+                out[(stage, segment)] = StageRate(live / len(group), len(group))
+    return out
+
+
+def _logit(p: float) -> float:
+    p = min(max(p, 1e-4), 1 - 1e-4)
+    return math.log(p / (1 - p))
+
+
 class BackofficeService:
     def __init__(
         self,
@@ -202,6 +305,27 @@ class BackofficeService:
         self._scores: dict[str, Score] = (
             {lid: model.score(f) for lid, f in self._features.items()} if model else {}
         )
+        leads = list(self.leads)
+        self._stage_rates = stage_rates(leads)
+        live = sum(lead.outcome is Outcome.ACTIVATED for lead in leads)
+        self._overall_rate = live / len(leads) if leads else 0.0
+
+    def journey_score(
+        self, stage: Stage, segment: str | None
+    ) -> tuple[Score | None, dict[str, Any] | None]:
+        """(score, basis) for an app journey: how leads that got as far went on to do."""
+        found = self._stage_rates.get((stage, segment)) or self._stage_rates.get((stage, None))
+        if found is None or not self._overall_rate:
+            return None, None
+        effect = round(_logit(found.rate) - _logit(self._overall_rate), 4)
+        score = Score(found.rate, (Factor("journey_stage", stage.value, effect),))
+        basis = {
+            "stage": stage.value,
+            "segment": segment if (stage, segment) in self._stage_rates else None,
+            "rate": round(found.rate, 4),
+            "n": found.n,
+        }
+        return score, basis
 
     # -------------------------------------------------------------- helpers
 
@@ -247,7 +371,9 @@ class BackofficeService:
 
     # -------------------------------------------------------------- call-next list
 
-    def _lead_row(self, lead: Lead, partner: str | None) -> dict[str, Any]:
+    def _lead_row(
+        self, lead: Lead, partner: str | None, call: CallOutcome | None = None
+    ) -> dict[str, Any]:
         return {
             "lead_id": lead.lead_id,
             "created_date": lead.created_date.isoformat(),
@@ -269,6 +395,7 @@ class BackofficeService:
             "stage_reached": lead.stage_reached.value,
             "drop_reason": lead.drop_reason.value if lead.drop_reason else None,
             "assigned_partner": partner,
+            "last_call": _call_view(call),
             **_score_view(self._scores.get(lead.lead_id)),
         }
 
@@ -282,12 +409,21 @@ class BackofficeService:
         unassigned: bool = False,
         limit: int = 50,
         offset: int = 0,
+        clock: Clock | None = None,
+        idle_minutes: int = 30,
+        lang: str = "en",
     ) -> dict[str, Any]:
+        """Historic leads ranked by score. On the first page, also the app's own
+        unfinished journeys that can be called, so one list covers both."""
         staff.require(Perm.LEADS_READ)
         assigned = self._assignments(db, LeadKind.LEAD)
+        calls = _last_calls(db, LeadKind.LEAD)
         candidates: list[Lead] = []
         for lead in self.leads:
             if lead.outcome is Outcome.ACTIVATED or lead.drop_reason in _NOT_CALLABLE:
+                continue
+            last = calls.get(lead.lead_id)
+            if last is not None and last.outcome in CLOSING_CALLS:
                 continue
             partner = assigned.get(lead.lead_id)
             if is_scoped(staff.role) and partner != staff.partner_id:
@@ -306,12 +442,27 @@ class BackofficeService:
             )
         )
         page = candidates[offset : offset + limit]
+        live: list[dict[str, Any]] = []
+        if clock is not None and offset == 0 and not source:
+            rows = self.sessions(db, clock, staff, idle_minutes=idle_minutes, lang=lang)
+            for row in rows["sessions"]:
+                if not row["contactable"]:
+                    continue  # anonymous: nobody to call
+                if segment and row["profile"].get("segment") != segment:
+                    continue
+                if unassigned and row["assigned_partner"] is not None:
+                    continue
+                live.append(row)
         return {
             "total": len(candidates),
             "offset": offset,
             "limit": limit,
             "model_available": self.model is not None,
-            "leads": [self._lead_row(lead, assigned.get(lead.lead_id)) for lead in page],
+            "leads": [
+                self._lead_row(lead, assigned.get(lead.lead_id), calls.get(lead.lead_id))
+                for lead in page
+            ],
+            "sessions": live,
         }
 
     # -------------------------------------------------------------- unclosed sessions
@@ -361,7 +512,11 @@ class BackofficeService:
     ) -> tuple[str | None, str | None]:
         """(stall reason, question it stopped at) — ``None`` if the session isn't stuck."""
         if session.status is SessionStatus.CHECKOUT:
-            return (_ORDER_STALL.get(order.state) if order else None), None
+            if order is None:
+                return None, None
+            if order.state is OrderState.KYC_VERIFIED and not _signed(order):
+                return "SIGN_PENDING", None  # e-sign comes before payment (Phase 3)
+            return _ORDER_STALL.get(order.state), None
         if session.status is SessionStatus.QUOTED:
             if quote is None:
                 return "QUOTE_NOT_OPENED", None
@@ -374,7 +529,7 @@ class BackofficeService:
         return None, None
 
     def sessions(
-        self, db: Session, clock: Clock, staff: Staff, *, idle_minutes: int
+        self, db: Session, clock: Clock, staff: Staff, *, idle_minutes: int, lang: str = "en"
     ) -> dict[str, Any]:
         """Advisor journeys that stopped short (J1), newest first, with why they stalled.
 
@@ -405,6 +560,7 @@ class BackofficeService:
         quotes = self._latest_quotes(db, ids)
         orders = self._orders_by_session(db, ids)
         reachable = self._contactable(db, (s.principal_token or "" for s in sessions))
+        calls = _last_calls(db, LeadKind.SESSION)
 
         rows: list[dict[str, Any]] = []
         for s in sessions:
@@ -413,13 +569,21 @@ class BackofficeService:
             callback = s.callback_requested_at
             if last > cutoff and callback is None:
                 continue  # still in progress
+            last_call = calls.get(s.id)
+            if last_call is not None and last_call.outcome in CLOSING_CALLS:
+                continue  # staff spoke to them: not interested / wrong number
             reason, at_question = self.stall_reason(s, quotes.get(s.id), order, now)
+            stuck_at = reason  # why it stopped, kept even when "call me" puts it on top
             if callback is not None:
                 reason = "CALLBACK_REQUESTED"
             if reason is None:
                 continue
             slots = (s.slots or {}).get("slots", {})
             quote = quotes.get(s.id)
+            segment = slots.get("segment")
+            score, basis = self.journey_score(
+                journey_stage(s, order), segment if isinstance(segment, str) else None
+            )
             rows.append(
                 {
                     "session_id": s.id,
@@ -449,14 +613,113 @@ class BackofficeService:
                     "order_state": order.state.value if order else None,
                     "contactable": bool(s.principal_token and s.principal_token in reachable),
                     "callback_requested_at": callback.isoformat() if callback else None,
+                    "stuck_at": stuck_at,
+                    "detail": self._stall_detail(db, order, lang),
+                    "last_call": _call_view(last_call),
                     "assigned_partner": assigned.get(s.id),
-                    **_score_view(self.score(session_features(slots))),
+                    "basis": basis,
+                    **_score_view(score),
                 }
             )
             if len(rows) >= _SESSION_LIMIT:
                 break
         rows.sort(key=lambda r: r["callback_requested_at"] is None)  # stable: callbacks first
         return {"idle_minutes": idle_minutes, "sessions": rows}
+
+    def _stall_detail(self, db: Session, order: Order | None, lang: str) -> dict[str, Any]:
+        """What exactly went wrong, so the caller can open with it (never personal data)."""
+        if order is None:
+            return {}
+        if order.state is OrderState.PAYMENT_FAILED:
+            failed = db.scalar(
+                select(func.count(Payment.id)).where(
+                    Payment.order_id == order.id, Payment.status == PaymentStatus.FAILED
+                )
+            )
+            return {"failed_payments": int(failed or 0)}
+        if order.state is not OrderState.KYC_ACTION_NEEDED:
+            return {}
+        app = db.scalar(
+            select(KycApplication)
+            .where(KycApplication.principal_token == order.principal_token)
+            .order_by(KycApplication.created_at.desc())
+            .limit(1)
+        )
+        if app is None:
+            return {}
+        fixes: list[str] = []
+        for raw in (app.last_verdict or {}).get("checks", []):
+            try:
+                check = Check.model_validate(raw)
+            except ValueError:
+                continue
+            if check.status is CheckStatus.PASS:
+                continue
+            text = fix_message(check, lang)
+            if text and text not in fixes:
+                fixes.append(text)
+        return {"kyc_fixes": fixes[:_MAX_KYC_FIXES], "kyc_attempts": app.failed_attempts}
+
+    # -------------------------------------------------------------- call outcomes
+
+    def log_call(
+        self,
+        db: Session,
+        clock: Clock,
+        staff: Staff,
+        kind: LeadKind,
+        ref: str,
+        outcome: CallResult,
+    ) -> dict[str, Any]:
+        """Record how a call went. Partners may log only what is assigned to them."""
+        staff.require(Perm.LEADS_READ)
+        session: AdvisorSession | None = None
+        if kind is LeadKind.LEAD:
+            if ref not in self.leads:
+                raise BackofficeError(404, "NOT_FOUND")
+        else:
+            session = db.get(AdvisorSession, ref)
+            if session is None:
+                raise BackofficeError(404, "NOT_FOUND")
+        self._visible(db, staff, kind, ref)
+        row = CallOutcome(
+            lead_kind=kind,
+            lead_ref=ref,
+            outcome=outcome,
+            staff_id=staff.id,
+            staff_username=staff.username,
+            created_at=clock.now(),
+        )
+        db.add(row)
+        cleared = False
+        if (
+            session is not None
+            and session.callback_requested_at is not None
+            and outcome in ANSWERS_CALLBACK
+        ):
+            # The owner's "call me" is answered. A plain UPDATE that keeps updated_at:
+            # otherwise the journey would look "in progress" and drop off the list.
+            db.execute(
+                update(AdvisorSession)
+                .where(AdvisorSession.id == session.id)
+                .values(callback_requested_at=None, updated_at=AdvisorSession.updated_at)
+            )
+            cleared = True
+        AuditLog(db, clock).append(
+            actor=staff.actor,
+            action="CALL_LOGGED",
+            entity_type=kind.value.lower(),
+            entity_id=ref,
+            detail={"outcome": outcome.value, "callback_cleared": cleared},
+        )
+        db.commit()
+        return {
+            "kind": kind.value,
+            "ref": ref,
+            "last_call": _call_view(row),
+            "closed": outcome in CLOSING_CALLS,
+            "callback_cleared": cleared,
+        }
 
     # -------------------------------------------------------------- assignments
 

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { HelpPanel } from "@/components/advisor/HelpPanel";
 import { QuestionForm } from "@/components/advisor/QuestionForm";
 import { type PlanChange, RecommendationCard, diffPlans } from "@/components/advisor/RecommendationCard";
+import { SpeakerToggle, useSpeaker } from "@/components/advisor/Speaker";
 import { VoiceButton } from "@/components/advisor/VoiceButton";
 import { JourneySteps } from "@/components/JourneySteps";
 import {
@@ -75,6 +76,8 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  const speaker = useSpeaker(locale);
+  const { speak } = speaker;
 
   const customise = async () => {
     if (!sessionId || busy) return;
@@ -105,6 +108,7 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
       setProgress(res.progress ?? null);
       setAssumed(res.assumed ?? []);
       setCanRefine(Boolean(res.can_refine));
+      speak(res.messages.map((m) => m.text)); // only if the owner turned the speaker on
       setEntries((prev) => {
         const next: Entry[] = [...prev];
         if (userText) next.push({ role: "user", kind: "text", text: userText });
@@ -123,7 +127,7 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
         return next;
       });
     },
-    [locale],
+    [locale, speak],
   );
 
   const run = useCallback(async (call: () => Promise<TurnResponse>, userText?: string) => {
@@ -236,6 +240,7 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
         t={t}
         onText={(text) => setDraft((d) => `${d} ${text}`.trim())}
         onError={setVoiceError}
+        onStart={speaker.stop}
       />
       <button
         type="submit"
@@ -258,6 +263,14 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
   return (
     <section className="flex flex-col gap-4" aria-live="polite">
       <JourneySteps t={t} current={1} />
+      <SpeakerToggle
+        speaker={speaker}
+        t={t}
+        latest={() => {
+          const last = [...entries].reverse().find((e) => e.role === "assistant");
+          return last ? [last.text] : [];
+        }}
+      />
       <ol className="flex flex-col gap-2" data-testid="transcript">
         {entries.map((entry, i) => (
           <li
