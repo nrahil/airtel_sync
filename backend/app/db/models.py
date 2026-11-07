@@ -361,6 +361,23 @@ class Payment(Base):
     order: Mapped[Order] = relationship(back_populates="payments")
 
 
+class InstallBooking(Base):
+    """The installation visit the owner picked (mock calendar), once feasibility passed.
+
+    One row per order; changing the slot updates it (each change is audited).
+    """
+
+    __tablename__ = "install_bookings"
+    __table_args__ = (CheckConstraint("changes >= 0", name="ck_install_changes"),)
+
+    order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"), primary_key=True)
+    slot_date: Mapped[date]
+    window: Mapped[str] = mapped_column(String(16))
+    changes: Mapped[int] = mapped_column(Integer, default=0)
+    booked_at: Mapped[datetime] = mapped_column(default=_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_now)
+
+
 class OrderNotification(Base):
     """One proactive status message (mock WhatsApp/SMS) or back-office alert.
 

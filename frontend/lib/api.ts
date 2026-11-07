@@ -262,8 +262,30 @@ export interface Tracker {
   refund_due_paise: number;
   can_cancel: boolean;
   can_simulate: boolean;
-  notifications: { channel: "WHATSAPP" | "SMS"; state: OrderState; status: "SENT" | "FAILED" | "NO_CONTACT"; at: string }[];
+  notifications: {
+    channel: "WHATSAPP" | "SMS";
+    /** STATUS_UPDATE (a step changed) or INSTALL_SLOT (visit booked / moved). */
+    template: string;
+    state: OrderState;
+    status: "SENT" | "FAILED" | "NO_CONTACT";
+    at: string;
+  }[];
+  /** The booked installation visit, if any. */
+  slot: {
+    date: string;
+    window: SlotWindow;
+    changes_left: number;
+    can_change: boolean;
+    why_not: "TOO_LATE_TO_CHANGE" | "TOO_MANY_CHANGES" | null;
+  } | null;
+  /** Free visit slots to pick from (empty unless a visit can be picked or moved now). */
+  calendar: { date: string; free: SlotWindow[] }[];
+  /** Day 21+: an apology, an honest new date and a "Call me". */
+  late: { new_date: string } | null;
+  callback_requested: boolean;
 }
+
+export type SlotWindow = "MORNING" | "AFTERNOON" | "EVENING";
 
 export interface OrderSummary {
   order_id: string;
@@ -520,6 +542,8 @@ export interface KycApplication {
   failed_attempts: number;
   handed_off: boolean;
   documents: { slot: DocSlot; source: DocSource; uploaded_at: string }[];
+  /** The details given at the start, masked (so the owner can spot a mistake). */
+  on_record_masked?: { contact_name: string | null; gstin: string | null; udyam_number: string | null };
   verdict: {
     decision: Exclude<KycStatus, "DRAFT">;
     review_required: boolean;
@@ -634,6 +658,18 @@ export function submitKyc(applicationId: string, locale: string): Promise<KycApp
  * `allow` is the owner's answer on DigiLocker's consent screen. Rejects with
  * ApiError(422, DIGILOCKER_NOT_LINKED) or ApiError(409, DIGILOCKER_DECLINED).
  */
+/**
+ * Fix the name / GSTIN / Udyam number given at the start. Only the fields sent change;
+ * `null` removes one. Online / DigiLocker checks of an old value are dropped (listed in
+ * `documents_dropped`). Rejects with ApiError(409, KYC_VERIFIED_LOCKED) once verified.
+ */
+export function editOnRecord(
+  applicationId: string,
+  changes: { contact_name?: string | null; gstin?: string | null; udyam_number?: string | null },
+): Promise<KycApplication & { changed: string[]; documents_dropped: DocSlot[] }> {
+  return call("PATCH", `/api/v1/kyc/applications/${enc(applicationId)}/on-record`, changes, { auth: true });
+}
+
 export function fetchFromDigilocker(
   applicationId: string,
   slot: "SIGNATORY_ID" | "UDYAM_CERTIFICATE",
@@ -728,4 +764,21 @@ export function withdrawConsent(
 /** Rejects with ApiError(409, ERASURE_BLOCKED) while an install is booked or the service is live. */
 export function eraseMyData(locale: string): Promise<{ erased: true; orders_cancelled: string[] }> {
   return call("POST", "/api/v1/privacy/erasure", { confirm: "ERASE", locale }, { auth: true });
+}
+
+// ------------------------------------------------------------------ installation visit, call me
+
+/** Pick or move the installation visit. Rejects with ApiError(409, SLOT_FULL | TOO_LATE_TO_CHANGE | …). */
+export function bookSlot(orderId: string, date: string, window: SlotWindow): Promise<Order> {
+  return call("POST", `/api/v1/orders/${enc(orderId)}/slot`, { date, window }, { auth: true });
+}
+
+/** "Call me": the order goes to the top of the back office's callback list. */
+export function requestOrderCallback(orderId: string): Promise<Order> {
+  return call("POST", `/api/v1/orders/${enc(orderId)}/callback`, undefined, { auth: true });
+}
+
+/** Demo only (404 in production): back-date the order past the 21-day promise. */
+export function simulateLate(orderId: string): Promise<Order> {
+  return call("POST", `/api/v1/orders/${enc(orderId)}/demo/late`, undefined, { auth: true });
 }

@@ -136,6 +136,15 @@ export function QuoteScreen({ locale, t }: { locale: Locale; t: Messages }) {
   return (
     <div className="flex flex-col gap-5">
       <JourneySteps t={t} current={1} />
+      {editable && (
+        <Link
+          href={`/${locale}/advisor?s=${encodeURIComponent(quote.session_id)}`}
+          data-testid="change-answers"
+          className="self-start text-sm text-red-800 underline dark:text-red-200"
+        >
+          {t.quote.changeAnswers}
+        </Link>
+      )}
       {refreshedFrom !== null && (
         <p role="status" data-testid="refreshed" className="rounded-xl bg-green-50 p-3 text-green-900 dark:bg-green-950 dark:text-green-100">
           {rupeeDifference(refreshedFrom, totals.monthly_total_paise) === 0

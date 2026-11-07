@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
@@ -20,6 +21,9 @@ export default async function PrivacyPage({ params }: { params: Promise<{ locale
   const t = messagesFor(locale);
   return (
     <main lang={bcp47(locale)} className="mx-auto flex min-h-dvh max-w-md flex-col gap-4 px-4 py-6">
+      <Link href={`/${locale}`} className="self-start text-sm text-neutral-500 underline" data-testid="home">
+        ← {t.advisor.home}
+      </Link>
       <h1 className="text-2xl font-semibold tracking-tight">{t.privacy.title}</h1>
       <Suspense fallback={<p className="text-neutral-500">{t.advisor.thinking}</p>}>
         <PrivacyCentre locale={locale} t={t} />

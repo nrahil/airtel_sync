@@ -526,6 +526,11 @@ function Sla({ t, me }: { t: T; me: StaffMe }) {
               <span className="font-mono text-xs text-neutral-500">{o.order_id.slice(0, 8).toUpperCase()}</span> {o.state} ·{" "}
               <span className="text-red-700">{fill(t.sla.age, { n: o.age_days })}</span>
             </p>
+            {o.callback_requested_at && (
+              <p className="self-start rounded bg-amber-100 px-2 py-0.5 text-sm font-medium text-amber-900 dark:bg-amber-900 dark:text-amber-100" data-testid="sla-call-me">
+                {t.sla.callMe}
+              </p>
+            )}
             <p className="text-sm">{o.products.join(", ")}</p>
             <p className="text-xs text-neutral-500">{fill(t.sla.due, { date: o.sla_due })}</p>
             <div className="flex flex-wrap gap-3">

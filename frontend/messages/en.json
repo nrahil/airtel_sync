@@ -169,7 +169,8 @@
     "shareNote": "They can see the price but can't change your plan. The link works until {date}.",
     "shareMessage": "Price for our business plan: {amount}/month. Details (view only): {url}",
     "refreshedSame": "Prices refreshed. Today's price is the same: {amount}/month.",
-    "refreshedChanged": "Prices refreshed. Before: {old}/month. Today: {new}/month."
+    "refreshedChanged": "Prices refreshed. Before: {old}/month. Today: {new}/month.",
+    "changeAnswers": "← Change my answers"
   },
   "otp": {
     "title": "Confirm your mobile number",
@@ -265,7 +266,6 @@
     "eta": "Expected by {date}",
     "etaEstimated": "Expected around {date} — the clock starts once your documents are verified",
     "lineEta": "{days} days · by {date}",
-    "slaBreached": "This is taking longer than it should. Our team has been alerted and will call you.",
     "goToPayment": "Go to payment",
     "handedOff": "A partner will call you to help with your documents.",
     "alternative": "{name} works at your site: {from}–{to} a month, installed in about {days} days.",
@@ -308,7 +308,31 @@
     "channel": {
       "WHATSAPP": "WhatsApp",
       "SMS": "SMS"
-    }
+    },
+    "nextTitle": "What happens next",
+    "nextCheck": "We're checking that your site can get the service. Then you pick a time for the installation visit. Ready by {date}.",
+    "nextPick": "Your site can get the service. Pick a time for the installation visit.",
+    "nextVisit": "Please keep someone at the shop on {date}, {window}. The engineer calls before coming.",
+    "nextChange": "Change the time",
+    "nextTooLate": "The visit is today, so it can't be moved here. Ask us to call you if you need to.",
+    "nextTooMany": "The time has been changed several times already. To change it again, ask us to call you.",
+    "nextSwitchOn": "Installation done. We're switching your services on, by {date}.",
+    "nextLive": "Your services are live. Nothing more to do.",
+    "pickTitle": "Pick a time for the installation visit",
+    "pickHint": "You can change it until the day before.",
+    "book": "Book {day}, {window}",
+    "lateTitle": "Sorry, your order is taking longer than we promised.",
+    "lateDate": "New date: {date}.",
+    "lateCall": "Call me",
+    "lateCalled": "Done. Someone from our team will call you soon, usually within one working day.",
+    "slotNotice": "Installation visit booked",
+    "sentAt": "{channel} · {when}",
+    "windows": {
+      "MORNING": "10 am–1 pm",
+      "AFTERNOON": "2–5 pm",
+      "EVENING": "5–7 pm"
+    },
+    "demoLate": "Make this order 3 weeks old"
   },
   "kyc": {
     "title": "Verify your business",
@@ -377,7 +401,17 @@
     "digilockerDeny": "Don't allow",
     "digilockerNotLinked": "We couldn't find this in your DigiLocker. Please take a photo instead.",
     "digilockerDeclined": "Nothing was fetched. You can take a photo instead.",
-    "fetched": "From DigiLocker"
+    "fetched": "From DigiLocker",
+    "detailsTitle": "Your details",
+    "edit": "Edit",
+    "editHint": "Change only what is wrong. Leave a box empty to keep it as it is.",
+    "current": "Now: {value}",
+    "removeField": "I don't have one",
+    "saveDetails": "Save details",
+    "cancelEdit": "Cancel",
+    "detailsSaved": "Your details are updated.",
+    "droppedNote": "Please check these again: {docs}.",
+    "detailsLocked": "Your business is already verified, so these details can't be changed here."
   },
   "journey": {
     "label": "Your progress",
@@ -385,7 +419,8 @@
     "signIn": "Your number",
     "documents": "Documents",
     "pay": "Pay",
-    "step": "Step {step} of {total}"
+    "step": "Step {step} of {total}",
+    "back": "Back"
   },
   "landing": {
     "tagline": "Internet, SIMs, WhatsApp and billing for your shop — one bill, one number.",

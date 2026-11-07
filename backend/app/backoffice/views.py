@@ -629,6 +629,11 @@ class BackofficeService:
                 "sla_due": sla_due(o.created_at).isoformat(),
                 "eta": o.eta.isoformat() if o.eta else None,
                 "alerted_at": o.sla_alerted_at.isoformat() if o.sla_alerted_at else None,
+                "callback_requested_at": (
+                    o.quote.session.callback_requested_at.isoformat()
+                    if o.quote.session.callback_requested_at
+                    else None
+                ),
                 "products": [line["product_name"] for line in o.quote.payload["lines"]],
             }
             for o in orders

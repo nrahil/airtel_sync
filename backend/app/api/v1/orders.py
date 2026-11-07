@@ -21,7 +21,9 @@ person who withdrew consent can still see where their order stands.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from datetime import date as date_type
+from datetime import timedelta
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -31,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import authenticated, get_db, guarded, require_idempotency_key
 from app.api.v1.quotes import checkout_services
+from app.audit.log import AuditLog
 from app.checkout.esign import EsignError, order_form
 from app.checkout.orders import (
     CheckoutError,
@@ -41,6 +44,7 @@ from app.checkout.orders import (
 )
 from app.config import Clock, get_clock
 from app.db.models import ConsentPurpose, KycStatus, Order, OrderState
+from app.orders.eta import SLA_DAYS
 from app.orders.service import TrackerError
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -64,6 +68,13 @@ class Fulfil(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     state: OrderState
+
+
+class SlotChoice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    date: date_type
+    window: Literal["MORNING", "AFTERNOON", "EVENING"]
 
 
 class EsignCode(BaseModel):
@@ -171,6 +182,69 @@ def cancel_order(
         services.tracker.cancel(db, clock, order, principal)
     except TrackerError as exc:
         raise _fail(exc) from None
+    return _view(request, db, clock, services, order)
+
+
+@router.post("/{order_id}/slot")
+def book_slot(
+    order_id: str,
+    body: SlotChoice,
+    request: Request,
+    db: Db,
+    clock: ClockDep,
+    services: Services,
+    principal: Principal,
+) -> dict[str, Any]:
+    """Pick or move the installation visit (once feasibility has passed)."""
+    order = _owned(db, principal, order_id)
+    try:
+        services.tracker.book_slot(db, clock, order, body.date, body.window)
+    except TrackerError as exc:
+        raise _fail(exc) from None
+    return _view(request, db, clock, services, order)
+
+
+@router.post("/{order_id}/callback")
+def request_callback(
+    order_id: str,
+    request: Request,
+    db: Db,
+    clock: ClockDep,
+    services: Services,
+    principal: Principal,
+) -> dict[str, Any]:
+    """ "Call me": the order goes to the top of the back office's callback list."""
+    order = _owned(db, principal, order_id)
+    try:
+        services.tracker.request_callback(db, clock, order)
+    except TrackerError as exc:
+        raise _fail(exc) from None
+    return _view(request, db, clock, services, order)
+
+
+@router.post("/{order_id}/demo/late")
+def demo_make_late(
+    order_id: str,
+    request: Request,
+    db: Db,
+    clock: ClockDep,
+    services: Services,
+    principal: Principal,
+) -> dict[str, Any]:
+    """Demo only: back-date the order past the 21-day promise, so the late path shows."""
+    if not _demo(request):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, {"code": "NOT_FOUND"})
+    order = _owned(db, principal, order_id)
+    order.created_at = clock.now() - timedelta(days=SLA_DAYS + 1)
+    AuditLog(db, clock).append(
+        actor=principal,
+        action="DEMO_ORDER_AGED",
+        entity_type="order",
+        entity_id=order.id,
+        detail={"days": SLA_DAYS + 1},
+    )
+    db.commit()
+    services.tracker.check_sla(db, clock, order)
     return _view(request, db, clock, services, order)
 
 

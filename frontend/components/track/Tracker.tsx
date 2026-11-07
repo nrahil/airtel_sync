@@ -8,12 +8,17 @@ import {
   ApiError,
   type Order,
   type OrderState,
+  type SlotWindow,
   type StepStatus,
+  type Tracker as TrackerView,
+  bookSlot,
   cancelOrder,
   getOrder,
   getToken,
+  requestOrderCallback,
   setToken,
   simulateFulfilment,
+  simulateLate,
 } from "@/lib/api";
 import { formatPaise } from "@/lib/format";
 import { type Locale, type Messages, bcp47, fill } from "@/lib/i18n";
@@ -108,6 +113,8 @@ export function Tracker({ locale, t, orderId }: { locale: Locale; t: Messages; o
   const ref = order.order_id.slice(0, 8).toUpperCase();
   const label = (s: OrderState) => t.track.states[s];
   const nextStep = NEXT_STEP[order.state];
+  // Demo: show the late path (day 21+) for any order still open.
+  const canAge = !tr.late && !["ACTIVATED", "CANCELLED", "NOT_FEASIBLE"].includes(order.state);
 
   return (
     <div className="flex flex-col gap-5">
@@ -125,14 +132,40 @@ export function Tracker({ locale, t, orderId }: { locale: Locale; t: Messages; o
         )}
       </header>
 
-      {tr.sla.breached && (
-        <p role="alert" data-testid="sla" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
-          {t.track.slaBreached}
-        </p>
+      {tr.late && (
+        <section role="alert" data-testid="sla" className="flex flex-col gap-1 rounded-xl bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-50">
+          <p className="font-semibold">{t.track.lateTitle}</p>
+          <p data-testid="late-date">{fill(t.track.lateDate, { date: formatDay(tr.late.new_date, locale) })}</p>
+          {tr.callback_requested ? (
+            <p role="status" data-testid="late-called">
+              {t.track.lateCalled}
+            </p>
+          ) : (
+            <button
+              type="button"
+              data-testid="late-call"
+              disabled={busy}
+              onClick={() => void act(() => requestOrderCallback(order.order_id))}
+              className="self-start rounded-lg bg-amber-700 px-3 py-2 font-medium text-white disabled:opacity-50"
+            >
+              {t.track.lateCall}
+            </button>
+          )}
+        </section>
       )}
 
       <section data-testid="next-action" className="flex flex-col gap-2 rounded-xl bg-neutral-100 p-3 text-sm dark:bg-neutral-800">
-        <p>{t.track.next[order.next_action]}</p>
+        <h2 className="font-semibold">{t.track.nextTitle}</h2>
+        <p data-testid="next-sentence">{nextSentence(order, tr, t, locale)}</p>
+        {order.state === "INSTALL_SCHEDULED" && (
+          <VisitPicker
+            tracker={tr}
+            t={t}
+            locale={locale}
+            busy={busy}
+            onBook={(day, window) => act(() => bookSlot(order.order_id, day, window))}
+          />
+        )}
         {order.next_action === "FIX_KYC" && (
           <ul className="list-disc ps-5" data-testid="kyc-fixes">
             {tr.kyc.fixes.map((f) => (
@@ -237,7 +270,9 @@ export function Tracker({ locale, t, orderId }: { locale: Locale; t: Messages; o
               .filter((n) => n.status === "SENT")
               .map((n, i) => (
                 <li key={`${n.at}-${i}`}>
-                  {t.track.channel[n.channel]} · {label(n.state)} · {formatDay(n.at, locale)}
+                  {fill(t.track.sentAt, { channel: t.track.channel[n.channel], when: formatWhen(n.at, locale) })}
+                  {" — "}
+                  {n.template === "INSTALL_SLOT" ? t.track.slotNotice : label(n.state)}
                 </li>
               ))}
           </ul>
@@ -267,17 +302,30 @@ export function Tracker({ locale, t, orderId }: { locale: Locale; t: Messages; o
         )}
       </div>
 
-      {tr.can_simulate && nextStep && (
+      {tr.can_simulate && (nextStep || canAge) && (
         <section data-testid="demo" className="flex flex-col gap-2 rounded-xl border border-dashed border-neutral-400 p-3 text-sm">
           <p className="font-medium">{t.track.demo}</p>
           <p className="text-xs text-neutral-500">{t.track.demoNote}</p>
           <div className="flex flex-wrap gap-2">
-            <button type="button" disabled={busy} onClick={() => void act(() => simulateFulfilment(order.order_id, nextStep))} className="rounded-lg px-3 py-2 ring-1 ring-neutral-300 disabled:opacity-50">
-              → {label(nextStep)}
-            </button>
+            {nextStep && (
+              <button type="button" disabled={busy} onClick={() => void act(() => simulateFulfilment(order.order_id, nextStep))} className="rounded-lg px-3 py-2 ring-1 ring-neutral-300 disabled:opacity-50">
+                → {label(nextStep)}
+              </button>
+            )}
             {order.state === "FEASIBILITY_CHECK" && (
               <button type="button" disabled={busy} onClick={() => void act(() => simulateFulfilment(order.order_id, "NOT_FEASIBLE"))} className="rounded-lg px-3 py-2 ring-1 ring-neutral-300 disabled:opacity-50">
                 → {label("NOT_FEASIBLE")}
+              </button>
+            )}
+            {canAge && (
+              <button
+                type="button"
+                data-testid="demo-late"
+                disabled={busy}
+                onClick={() => void act(() => simulateLate(order.order_id))}
+                className="rounded-lg px-3 py-2 ring-1 ring-neutral-300 disabled:opacity-50"
+              >
+                {t.track.demoLate}
               </button>
             )}
           </div>
@@ -298,4 +346,147 @@ export function Tracker({ locale, t, orderId }: { locale: Locale; t: Messages; o
 
 function names(order: Order, ids: string[]): string {
   return ids.map((id) => order.lines.find((l) => l.product_id === id)?.product_name ?? id).join(", ");
+}
+
+/** "15 Jul, 10:42" in India time: when a WhatsApp/SMS update went out. */
+function formatWhen(iso: string, locale: Locale): string {
+  return new Intl.DateTimeFormat(`${bcp47(locale)}-u-nu-latn`, {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(iso));
+}
+
+/** "Thu 16 Jul": a visit day the owner can recognise at a glance. */
+function formatVisitDay(iso: string, locale: Locale): string {
+  return new Intl.DateTimeFormat(`${bcp47(locale)}-u-nu-latn`, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(`${iso}T00:00:00+05:30`));
+}
+
+/** One sentence: what happens next, and when (or what the owner needs to do). */
+function nextSentence(order: Order, tr: TrackerView, t: Messages, locale: Locale): string {
+  if (order.next_action !== "NONE") return t.track.next[order.next_action];
+  const by = tr.eta ? formatDay(tr.eta, locale) : "";
+  switch (order.state) {
+    case "PAYMENT_CONFIRMED":
+    case "FEASIBILITY_CHECK":
+      return fill(t.track.nextCheck, { date: by });
+    case "INSTALL_SCHEDULED":
+      return tr.slot
+        ? fill(t.track.nextVisit, { date: formatVisitDay(tr.slot.date, locale), window: t.track.windows[tr.slot.window] })
+        : t.track.nextPick;
+    case "INSTALLED":
+      return fill(t.track.nextSwitchOn, { date: by });
+    case "ACTIVATED":
+      return t.track.nextLive;
+    default:
+      return t.track.next.NONE;
+  }
+}
+
+/** Pick, or move, the installation visit from the free slots the server offers. */
+function VisitPicker(props: {
+  tracker: TrackerView;
+  t: Messages;
+  locale: Locale;
+  busy: boolean;
+  /** Resolves once the server has answered (the picker stays open until then). */
+  onBook: (day: string, window: SlotWindow) => Promise<void>;
+}) {
+  const { tracker: tr, t, locale, busy } = props;
+  const [open, setOpen] = useState(false);
+  const [day, setDay] = useState<string | null>(null);
+  const [slotWindow, setSlotWindow] = useState<SlotWindow | null>(null);
+
+  if (tr.slot && !tr.slot.can_change) {
+    return (
+      <p className="text-neutral-600 dark:text-neutral-300" data-testid="visit-locked">
+        {tr.slot.why_not === "TOO_MANY_CHANGES" ? t.track.nextTooMany : t.track.nextTooLate}
+      </p>
+    );
+  }
+  if (tr.calendar.length === 0) return null;
+  if (tr.slot && !open) {
+    return (
+      <button
+        type="button"
+        data-testid="visit-change"
+        onClick={() => setOpen(true)}
+        className="self-start rounded-lg px-3 py-2 font-medium ring-1 ring-neutral-300 dark:ring-neutral-600"
+      >
+        {t.track.nextChange}
+      </button>
+    );
+  }
+  const free = tr.calendar.find((d) => d.date === day)?.free ?? [];
+  return (
+    <div data-testid="visit-picker" className="flex flex-col gap-2">
+      <p className="font-medium">{t.track.pickTitle}</p>
+      <p className="text-xs text-neutral-500">{t.track.pickHint}</p>
+      <div className="flex flex-wrap gap-2" role="group" aria-label={t.track.pickTitle}>
+        {tr.calendar.map((d) => (
+          <button
+            key={d.date}
+            type="button"
+            data-testid={`visit-day-${d.date}`}
+            aria-pressed={day === d.date}
+            disabled={d.free.length === 0}
+            onClick={() => {
+              setDay(d.date);
+              setSlotWindow(null);
+            }}
+            className={`rounded-lg px-3 py-2 ring-1 disabled:opacity-40 ${
+              day === d.date
+                ? "bg-red-700 text-white ring-red-700"
+                : "bg-white ring-neutral-300 dark:bg-neutral-900 dark:ring-neutral-600"
+            }`}
+          >
+            {formatVisitDay(d.date, locale)}
+          </button>
+        ))}
+      </div>
+      {day && (
+        <div className="flex flex-wrap gap-2" role="group">
+          {(["MORNING", "AFTERNOON", "EVENING"] as const).map((w) => (
+            <button
+              key={w}
+              type="button"
+              data-testid={`visit-window-${w}`}
+              aria-pressed={slotWindow === w}
+              disabled={!free.includes(w)}
+              onClick={() => setSlotWindow(w)}
+              className={`rounded-lg px-3 py-2 ring-1 disabled:line-through disabled:opacity-40 ${
+                slotWindow === w
+                  ? "bg-red-700 text-white ring-red-700"
+                  : "bg-white ring-neutral-300 dark:bg-neutral-900 dark:ring-neutral-600"
+              }`}
+            >
+              {t.track.windows[w]}
+            </button>
+          ))}
+        </div>
+      )}
+      {day && slotWindow && (
+        <button
+          type="button"
+          data-testid="visit-book"
+          disabled={busy}
+          onClick={async () => {
+            await props.onBook(day, slotWindow);
+            setOpen(false);
+          }}
+          className="h-11 self-start rounded-xl bg-red-700 px-4 font-medium text-white disabled:opacity-50"
+        >
+          {fill(t.track.book, { day: formatVisitDay(day, locale), window: t.track.windows[slotWindow] })}
+        </button>
+      )}
+    </div>
+  );
 }

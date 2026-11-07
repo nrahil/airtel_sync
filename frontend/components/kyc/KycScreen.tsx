@@ -14,6 +14,7 @@ import {
   type KycApplication,
   type Order,
   createKycApplication,
+  editOnRecord,
   fetchFromDigilocker,
   getKycApplication,
   getOrder,
@@ -41,6 +42,12 @@ const GSTIN_LENGTH = 15;
 
 type Phase = "signin" | "loading" | "onRecord" | "documents";
 
+/** A form label without its trailing hint: "GSTIN (if you have one)" → "GSTIN". */
+const plain = (label: string) => label.replace(/\s*\([^)]*\)\s*$/, "");
+
+type Editable = "contact_name" | "gstin" | "udyam_number";
+const EMPTY_EDIT: Record<Editable, string> = { contact_name: "", gstin: "", udyam_number: "" };
+
 interface SlotState {
   busy: boolean;
   /** Immediate problem with this upload (blur, wrong document, too big…). */
@@ -67,6 +74,11 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
   const [gstPreview, setGstPreview] = useState<GstinPreview | "none" | null>(null);
   // DigiLocker's own consent screen, open for one document at a time.
   const [locker, setLocker] = useState<LockerSlot | null>(null);
+  // Fixing the details given at the start (a wrong GSTIN...), without starting over.
+  const [editing, setEditing] = useState(false);
+  const [edits, setEdits] = useState<Record<Editable, string>>(EMPTY_EDIT);
+  const [removed, setRemoved] = useState<Partial<Record<Editable, boolean>>>({});
+  const [notice, setNotice] = useState<string | null>(null);
 
   const fail = useCallback(
     (e: unknown) => {
@@ -222,6 +234,39 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
     }
   };
 
+  const saveDetails = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!app) return;
+    const changes: Partial<Record<Editable, string | null>> = {};
+    for (const key of ["contact_name", "gstin", "udyam_number"] as const) {
+      if (removed[key]) changes[key] = null;
+      else if (edits[key].trim()) changes[key] = edits[key].trim();
+    }
+    if (Object.keys(changes).length === 0) {
+      setEditing(false);
+      return;
+    }
+    setBusy(true);
+    setProblem(null);
+    try {
+      const res = await editOnRecord(app.application_id, changes);
+      setApp(res);
+      setSlots({});
+      setEditing(false);
+      setEdits(EMPTY_EDIT);
+      setRemoved({});
+      const docs = res.documents_dropped.map((slot) => t.kyc.slots[slot]).join(", ");
+      setNotice(docs ? `${t.kyc.detailsSaved} ${fill(t.kyc.droppedNote, { docs })}` : t.kyc.detailsSaved);
+      if (changes.gstin) void checkGstin(changes.gstin);
+      else setGstPreview(null);
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "KYC_VERIFIED_LOCKED") setProblem(t.kyc.detailsLocked);
+      else fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   /** The owner's answer on DigiLocker's consent screen (both are sent: a "no" is audited too). */
   const answerLocker = async (slot: LockerSlot, allow: boolean) => {
     if (!app) return;
@@ -293,7 +338,13 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
     </p>
   );
 
-  const steps = <JourneySteps t={t} current={app?.status === "PASS" ? 4 : 3} />;
+  const steps = (
+    <JourneySteps
+      t={t}
+      current={app?.status === "PASS" ? 4 : 3}
+      links={order ? { 2: `/${locale}/checkout?q=${encodeURIComponent(order.quote_id)}` } : {}}
+    />
+  );
 
   if (phase === "signin") {
     return (
@@ -357,6 +408,11 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
             {problem}
           </p>
         )}
+        {orderId && (
+          <Link href={`/${locale}/track/${encodeURIComponent(orderId)}`} data-testid="kyc-back" className="self-start text-sm underline">
+            ← {t.kyc.toTracker}
+          </Link>
+        )}
       </form>
     );
   }
@@ -412,6 +468,109 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
             >
               {order.next_action === "SIGN" ? t.checkout.signTitle : t.kyc.toPayment}
             </Link>
+          )}
+        </section>
+      )}
+
+      {app.on_record_masked && (
+        <section data-testid="kyc-details" className="flex flex-col gap-2 rounded-xl bg-white p-3 text-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-700">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-semibold">{t.kyc.detailsTitle}</h2>
+            {!passed && !editing && (
+              <button
+                type="button"
+                data-testid="kyc-details-edit"
+                onClick={() => {
+                  setEditing(true);
+                  setNotice(null);
+                }}
+                className="rounded-lg px-3 py-1.5 font-medium text-red-800 ring-1 ring-red-700 dark:text-red-200"
+              >
+                {t.kyc.edit}
+              </button>
+            )}
+          </div>
+          {!editing ? (
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+              {(
+                [
+                  [t.kyc.contactName, app.on_record_masked.contact_name],
+                  [t.kyc.gstin, app.on_record_masked.gstin],
+                  [t.kyc.udyam, app.on_record_masked.udyam_number],
+                ] as const
+              ).map(([label, value]) => (
+                <div key={label} className="contents">
+                  <dt className="text-neutral-500">{plain(label)}</dt>
+                  <dd className="font-mono">{value ?? "—"}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <form onSubmit={(e) => void saveDetails(e)} data-testid="kyc-details-form" className="flex flex-col gap-3">
+              <p className="text-xs text-neutral-500">{t.kyc.editHint}</p>
+              {(
+                [
+                  ["contact_name", t.kyc.contactName, app.on_record_masked.contact_name],
+                  ["gstin", t.kyc.gstin, app.on_record_masked.gstin],
+                  ["udyam_number", t.kyc.udyam, app.on_record_masked.udyam_number],
+                ] as const
+              ).map(([key, label, now]) => (
+                <div key={key} className="flex flex-col gap-1">
+                  <label className="flex flex-col gap-1 font-medium">
+                    {plain(label)}
+                    <input
+                      name={key}
+                      value={edits[key]}
+                      disabled={removed[key]}
+                      maxLength={key === "contact_name" ? 120 : 25}
+                      placeholder={fill(t.kyc.current, { value: now ?? "—" })}
+                      onChange={(e) => setEdits((v) => ({ ...v, [key]: e.target.value }))}
+                      className={`h-11 rounded-lg px-3 font-normal ring-1 ring-neutral-300 disabled:opacity-50 dark:bg-neutral-900 dark:ring-neutral-600 ${
+                        key === "contact_name" ? "" : "uppercase placeholder:normal-case"
+                      }`}
+                    />
+                  </label>
+                  {key !== "contact_name" && now && (
+                    <label className="flex items-center gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={!!removed[key]}
+                        onChange={(e) => setRemoved((r) => ({ ...r, [key]: e.target.checked }))}
+                        className="h-4 w-4 accent-red-700"
+                      />
+                      {t.kyc.removeField}
+                    </label>
+                  )}
+                </div>
+              ))}
+              <div className="flex gap-2">
+                <button type="submit" disabled={busy} className="h-11 rounded-xl bg-red-700 px-4 font-medium text-white disabled:opacity-50">
+                  {t.kyc.saveDetails}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditing(false);
+                    setEdits(EMPTY_EDIT);
+                    setRemoved({});
+                  }}
+                  className="h-11 rounded-xl px-4 ring-1 ring-neutral-300 dark:ring-neutral-600"
+                >
+                  {t.kyc.cancelEdit}
+                </button>
+              </div>
+            </form>
+          )}
+          {passed && <p className="text-xs text-neutral-500">{t.kyc.detailsLocked}</p>}
+          {notice && (
+            <p role="status" data-testid="kyc-details-notice" className="rounded-lg bg-green-50 p-2 text-green-900 dark:bg-green-950 dark:text-green-100">
+              {notice}
+            </p>
+          )}
+          {gstPreview && !editing && (
+            <p data-testid="gst-preview" className="rounded-lg bg-neutral-100 p-2 dark:bg-neutral-800">
+              {gstPreview === "none" ? t.kyc.gstNotFound : fill(t.kyc.gstFound, { name: gstPreview.trade_name, state: gstPreview.state })}
+            </p>
           )}
         </section>
       )}

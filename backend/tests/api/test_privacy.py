@@ -161,7 +161,7 @@ def test_correction_rechecks_kyc_and_logs_field_names_only(client: TestClient) -
     assert on_record["on_record"]["contact_name"] == "Rohan S. Kulkarni"
     with db_of(client) as db:
         events = db.scalars(select(AuditEvent).where(AuditEvent.action == "DATA_CORRECTED")).all()
-        assert [e.detail for e in events] == [{"fields": ["contact_name"]}]
+        assert [e.detail for e in events] == [{"fields": ["contact_name"], "documents_dropped": []}]
         assert "Rohan" not in json.dumps([e.detail for e in events])
 
 

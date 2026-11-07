@@ -10,6 +10,7 @@ production from the owner's demo endpoint. The guards are the same either way.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any, Final
 
 from sqlalchemy import ColumnElement, select
@@ -19,6 +20,7 @@ from app.audit.log import AuditLog
 from app.config import IST, Clock
 from app.db.models import (
     AuditEvent,
+    InstallBooking,
     KycApplication,
     KycStatus,
     Order,
@@ -29,6 +31,7 @@ from app.domain.catalogue import Catalogue
 from app.domain.eligibility import FIBRE_PRODUCTS
 from app.orders.eta import CLOSED, age_days, order_eta, sla_breached, sla_due
 from app.orders.notifications import OrderNotifier
+from app.orders.slots import MAX_CHANGES, SlotError, calendar, can_change, check_choice
 from app.orders.state_machine import (
     HAPPY_PATH,
     OWNER_CANCELLABLE,
@@ -205,6 +208,73 @@ class TrackerService:
                 detail={"amount_paise": paid, "reason": order.state.value},
             )
 
+    # -------------------------------------------------------------- install slot
+
+    @staticmethod
+    def booking(db: Session, order: Order) -> InstallBooking | None:
+        return db.get(InstallBooking, order.id)
+
+    def book_slot(
+        self, db: Session, clock: Clock, order: Order, day: date, window: str
+    ) -> InstallBooking:
+        """Pick (or move) the installation visit. Same slot again is a no-op."""
+        if order.state is not S.INSTALL_SCHEDULED:
+            raise TrackerError(409, "SLOT_NOT_OPEN", state=order.state.value)
+        today = clock.today()
+        current = self.booking(db, order)
+        if current is not None:
+            if (current.slot_date, current.window) == (day, window):
+                return current
+            why = can_change(today, current.slot_date, current.changes)
+            if why is not None:
+                raise TrackerError(409, why)
+        try:
+            check_choice(today, day, window)
+        except SlotError as exc:
+            raise TrackerError(exc.status, exc.code) from None
+        detail: dict[str, Any] = {"date": day.isoformat(), "window": window}
+        if current is None:
+            current = InstallBooking(
+                order_id=order.id, slot_date=day, window=window, booked_at=clock.now()
+            )
+            db.add(current)
+            action = "INSTALL_SLOT_BOOKED"
+        else:
+            detail["from"] = f"{current.slot_date.isoformat()} {current.window}"
+            current.slot_date, current.window = day, window
+            current.changes += 1
+            action = "INSTALL_SLOT_CHANGED"
+        current.updated_at = clock.now()
+        AuditLog(db, clock).append(
+            actor=order.principal_token,
+            action=action,
+            entity_type="order",
+            entity_id=order.id,
+            detail=detail,
+        )
+        self.notifier.slot_update(db, order, day, window)
+        db.commit()
+        return current
+
+    # -------------------------------------------------------------- call me
+
+    def request_callback(self, db: Session, clock: Clock, order: Order) -> None:
+        """The owner wants a call (late order): it goes to the back office callback list."""
+        if self.notifier.contact(db, order.principal_token) is None:
+            raise TrackerError(409, "NO_CONTACT")
+        session = order.quote.session
+        if session.callback_requested_at is None:
+            session.callback_requested_at = clock.now()
+            session.principal_token = order.principal_token
+            AuditLog(db, clock).append(
+                actor=order.principal_token,
+                action="ORDER_CALLBACK_REQUESTED",
+                entity_type="order",
+                entity_id=order.id,
+                detail={"state": order.state.value, "sla_breached": order.sla_breached},
+            )
+            db.commit()
+
     # -------------------------------------------------------------- SLA
 
     def check_sla(self, db: Session, clock: Clock, order: Order) -> bool:
@@ -318,6 +388,23 @@ class TrackerService:
         verdict = (kyc.last_verdict or {}) if kyc is not None else {}
         show_eta = order.state not in (S.CANCELLED, S.NOT_FEASIBLE)
         paid = sum(p.amount_paise for p in order.payments if p.status is PaymentStatus.SUCCEEDED)
+        booking = self.booking(db, order)
+        breached = order.state not in CLOSED and (
+            order.sla_breached or sla_breached(order.state, order.created_at, today)
+        )
+        callback = order.quote.session.callback_requested_at
+        slot: dict[str, Any] | None = None
+        if booking is not None:
+            why = can_change(today, booking.slot_date, booking.changes)
+            slot = {
+                "date": booking.slot_date.isoformat(),
+                "window": booking.window,
+                "changes_left": max(MAX_CHANGES - booking.changes, 0),
+                "can_change": order.state is S.INSTALL_SCHEDULED and why is None,
+                "why_not": why,
+            }
+        offer = order.state is S.INSTALL_SCHEDULED and (slot is None or slot["can_change"])
+        longest = max((x.install_days for x in eta.lines), default=0)
         return {
             "steps": self._steps(order.state, history),
             "history": history,
@@ -347,9 +434,23 @@ class TrackerService:
             "alternative": self.alternative(order),
             "refund_due_paise": paid if order.state in (S.CANCELLED, S.NOT_FEASIBLE) else 0,
             "can_cancel": order.state in OWNER_CANCELLABLE,
+            "slot": slot,
+            "calendar": [{"date": d.day.isoformat(), "free": list(d.free)} for d in calendar(today)]
+            if offer
+            else [],
+            # Late (day 21+): say sorry, give an honest new date, offer a call.
+            "late": {
+                "new_date": (
+                    booking.slot_date if booking else today + timedelta(days=longest)
+                ).isoformat(),
+            }
+            if breached
+            else None,
+            "callback_requested": callback is not None,
             "notifications": [
                 {
                     "channel": n.channel.value,
+                    "template": n.template,
                     "state": n.state,
                     "status": n.status.value,
                     "at": n.created_at.isoformat(),

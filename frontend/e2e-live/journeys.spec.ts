@@ -166,7 +166,7 @@ test("E2E-01/03/04: Hindi advisor → plan → P03 blocked → dependency cascad
     await page.getByTestId("demo").getByRole("button", { name: `→ ${t.track.states[state]}` }).click();
     await expect(page.getByTestId("order-state")).toHaveText(t.track.states[state]);
   }
-  await expect(page.getByTestId("next-action")).toContainText(t.track.next.NONE);
+  await expect(page.getByTestId("next-sentence")).toHaveText(t.track.nextLive);
 });
 
 test("E2E-02: K11 stale electricity bill → precise fix naming the cut-off date", async ({ page }) => {

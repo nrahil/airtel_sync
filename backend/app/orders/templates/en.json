@@ -4,7 +4,7 @@
     "QUOTE_ACCEPTED": "Order received. Next: verify your business documents.",
     "KYC_SUBMITTED": "Documents received. We are checking them.",
     "KYC_ACTION_NEEDED": "One of your documents needs a fix. Open the link to see what to change.",
-    "KYC_VERIFIED": "Documents verified. Next: pay the setup fee and first month.",
+    "KYC_VERIFIED": "Documents verified. Next: sign your order form, then pay the setup fee and first month.",
     "PAYMENT_CONFIRMED": "Payment received. We will now check your site.",
     "FEASIBILITY_CHECK": "We are checking whether your site can get the service.",
     "INSTALL_SCHEDULED": "Installation is booked. Our engineer will call before the visit.",
@@ -14,5 +14,11 @@
     "PAYMENT_FAILED": "Payment did not go through. You can try again from the link.",
     "NOT_FEASIBLE": "Fibre is not available at your site. Open the link to see the wireless option."
   },
-  "resume": "Udyam Digital: carry on choosing your business plan where you left off: {link}"
+  "resume": "Udyam Digital: carry on choosing your business plan where you left off: {link}",
+  "slot": "Udyam Digital · order {ref}: installation visit booked for {date}, {window}. Please keep someone at the shop. Change it: {link}",
+  "windows": {
+    "MORNING": "10 am–1 pm",
+    "AFTERNOON": "2–5 pm",
+    "EVENING": "5–7 pm"
+  }
 }

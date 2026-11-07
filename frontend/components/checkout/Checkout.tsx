@@ -184,7 +184,15 @@ export function Checkout({ locale, t }: { locale: Locale; t: Messages }) {
 
   return (
     <div className="flex flex-col gap-5">
-      <JourneySteps t={t} current={journey} />
+      <JourneySteps
+        t={t}
+        current={journey}
+        links={
+          order
+            ? { 3: `/${locale}/kyc?o=${encodeURIComponent(order.order_id)}` }
+            : { 1: `/${locale}/quote?q=${encodeURIComponent(quoteId)}` }
+        }
+      />
       {quote && step !== "order" && (
         <section
           data-testid="checkout-summary"

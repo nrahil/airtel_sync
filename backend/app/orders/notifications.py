@@ -25,6 +25,7 @@ import logging
 import re
 from collections import deque
 from dataclasses import dataclass
+from datetime import date
 from functools import cache
 from importlib import resources
 from typing import Final, Protocol
@@ -43,6 +44,7 @@ from app.db.models import (
     PrincipalIdentity,
 )
 from app.kyc.storage import BlobIntegrityError
+from app.orders.slots import WINDOWS
 from app.security.vault import ErasedError, Vault, VaultKeyError
 
 log = logging.getLogger("udyam.notify")
@@ -88,6 +90,16 @@ def templates() -> dict[str, dict[str, object]]:
         resume = data.get("resume")
         if not isinstance(resume, str) or set(_PLACEHOLDER.findall(resume)) != {"link"}:
             raise TemplateError(f"{locale}.resume: needs exactly the {{link}} placeholder")
+        slot, windows = data.get("slot"), data.get("windows")
+        if not isinstance(slot, str) or set(_PLACEHOLDER.findall(slot)) != {
+            "ref",
+            "date",
+            "window",
+            "link",
+        }:
+            raise TemplateError(f"{locale}.slot: placeholders must be ref, date, window, link")
+        if not isinstance(windows, dict) or set(windows) != set(WINDOWS):
+            raise TemplateError(f"{locale}.windows: needs {sorted(WINDOWS)}")
         out[locale] = data
     return out
 
@@ -202,6 +214,39 @@ class OrderNotifier:
             channel=channel,
             template="STATUS_UPDATE",
             state=state.value,
+            locale=locale,
+            status=status,
+        )
+        db.add(row)
+        return row
+
+    def slot_update(self, db: Session, order: Order, day: date, window: str) -> OrderNotification:
+        """Tell the owner when the engineer is coming (and how to move it)."""
+        locale = order.quote.session.locale
+        data = templates().get(locale) or templates()["en"]
+        windows = data["windows"]
+        assert isinstance(windows, dict)  # noqa: S101 - validated at import
+        phone = self.contact(db, order.principal_token)
+        status = NotificationStatus.NO_CONTACT
+        channel = NotificationChannel.WHATSAPP
+        if phone is not None:
+            text = str(data["slot"]).format(
+                ref=order_ref(order.id),
+                date=day.strftime("%d/%m/%Y"),
+                window=windows[window],
+                link=self.link(locale, order.id),
+            )
+            status = NotificationStatus.FAILED
+            for candidate in (NotificationChannel.WHATSAPP, NotificationChannel.SMS):
+                channel = candidate
+                if self.transport.send(candidate, phone, text):
+                    status = NotificationStatus.SENT
+                    break
+        row = OrderNotification(
+            order_id=order.id,
+            channel=channel,
+            template="INSTALL_SLOT",
+            state=order.state.value,
             locale=locale,
             status=status,
         )

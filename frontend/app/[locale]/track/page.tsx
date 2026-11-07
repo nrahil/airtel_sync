@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { OrderList } from "@/components/track/OrderList";
@@ -15,6 +16,9 @@ export default async function TrackListPage({ params }: { params: Promise<{ loca
   const t = messagesFor(locale);
   return (
     <main lang={bcp47(locale)} className="mx-auto flex min-h-dvh max-w-md flex-col gap-4 px-4 py-6">
+      <Link href={`/${locale}`} className="self-start text-sm text-neutral-500 underline" data-testid="home">
+        ← {t.advisor.home}
+      </Link>
       <h1 className="text-2xl font-semibold tracking-tight">{t.track.listTitle}</h1>
       <OrderList locale={locale} t={t} />
     </main>

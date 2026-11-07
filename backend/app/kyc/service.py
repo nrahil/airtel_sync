@@ -58,6 +58,7 @@ from app.lookups.registry import (
     RegistryProvider,
     RegistryUnavailableError,
 )
+from app.security.pii_mask import mask_gstin, mask_name, mask_udyam
 from app.security.vault import ErasedError, Vault, VaultKeyError
 
 log = logging.getLogger("udyam.kyc")
@@ -72,6 +73,19 @@ class ManualEntryNotAllowedError(ValueError):
 
 class NothingOnRecordError(ValueError):
     pass
+
+
+class KycLockedError(ValueError):
+    """A verified (PASS) application is not edited by the owner; a reviewer corrects it."""
+
+
+# What each detail on record vouches for: changing it drops the documents that were
+# checked *against that value* (online / DigiLocker), never a photo the owner took.
+_DEPENDS: Final = {
+    "gstin_on_record": (DocSlot.GST_CERTIFICATE, frozenset({Source.LOOKUP})),
+    "udyam_on_record": (DocSlot.UDYAM_CERTIFICATE, frozenset({Source.LOOKUP, Source.DIGILOCKER})),
+    "contact_name": (DocSlot.SIGNATORY_ID, frozenset({Source.DIGILOCKER})),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +280,55 @@ class KycService:
         )
         db.commit()
         return result.status
+
+    def update_on_record(
+        self, db: Session, app: KycApplication, changes: dict[str, str | None]
+    ) -> tuple[list[str], list[str]]:
+        """Change the details on record (a typo in the GSTIN, the wrong name...).
+
+        Returns ``(changed fields, slots dropped)``. Documents verified online or fetched
+        from DigiLocker for an old value are dropped, so they can't vouch for the new
+        one; photos stay and are re-checked against the new details. The application
+        goes back to DRAFT. Values are never logged, only field names.
+        """
+        if app.status is KycStatus.PASS:
+            raise KycLockedError(app.id)
+        current = self.context(app)
+        updated = ApplicationContext.model_validate({**current.model_dump(), **changes})
+        changed = sorted(k for k in changes if getattr(current, k) != getattr(updated, k))
+        if not changed:
+            return [], []
+        dropped: list[str] = []
+        for field in changed:
+            slot, sources = _DEPENDS[field]
+            for doc in [d for d in app.documents if d.slot == slot.value]:
+                if Source(doc.source) in sources:
+                    app.documents.remove(doc)
+                    dropped.append(slot.value)
+        self.set_context(app, updated)
+        app.status = KycStatus.DRAFT
+        app.last_verdict = None
+        AuditLog(db, self.clock).append(
+            actor=app.principal_token,
+            action="DATA_CORRECTED",
+            entity_type="kyc_application",
+            entity_id=app.id,
+            detail={"fields": changed, "documents_dropped": dropped},  # names only
+        )
+        db.commit()
+        return changed, dropped
+
+    def on_record_masked(self, app: KycApplication) -> dict[str, str | None]:
+        """The details on record as the owner may see them back: masked."""
+        try:
+            ctx = self.context(app)
+        except (ErasedError, BlobIntegrityError, VaultKeyError):
+            return {"contact_name": None, "gstin": None, "udyam_number": None}
+        return {
+            "contact_name": mask_name(ctx.contact_name) if ctx.contact_name else None,
+            "gstin": mask_gstin(ctx.gstin_on_record) if ctx.gstin_on_record else None,
+            "udyam_number": mask_udyam(ctx.udyam_on_record) if ctx.udyam_on_record else None,
+        }
 
     def request_visit(self, db: Session, app: KycApplication) -> None:
         """The owner would rather someone visits and collects the documents (J7, early)."""

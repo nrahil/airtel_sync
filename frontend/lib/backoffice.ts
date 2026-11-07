@@ -87,6 +87,8 @@ export interface SlaRow {
   sla_due: string;
   eta: string | null;
   alerted_at: string | null;
+  /** The owner tapped "Call me" on their late order. */
+  callback_requested_at: string | null;
   products: string[];
 }
 

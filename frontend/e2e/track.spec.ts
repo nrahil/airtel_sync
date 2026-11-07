@@ -47,7 +47,13 @@ function order(state: string, next: string, tracker: Record<string, unknown> = {
       refund_due_paise: 0,
       can_cancel: true,
       can_simulate: true,
-      notifications: [{ channel: "WHATSAPP", state: "QUOTE_ACCEPTED", status: "SENT", at: "2026-07-15T10:00:00+05:30" }],
+      notifications: [
+        { channel: "WHATSAPP", template: "STATUS_UPDATE", state: "QUOTE_ACCEPTED", status: "SENT", at: "2026-07-15T10:42:00+05:30" },
+      ],
+      slot: null,
+      calendar: [],
+      late: null,
+      callback_requested: false,
       ...tracker,
     },
   };
@@ -100,8 +106,13 @@ test("timeline, per-line ETAs, updates and the next step", async ({ page }) => {
   await expect(page.getByTestId("lines")).toContainText("Cloud CCTV × 2");
   await expect(page.getByTestId("lines")).toContainText("4 days · by 19 Jul");
   await expect(page.getByTestId("timeline").locator('[data-status="current"]')).toHaveText(/Payment received/);
-  await expect(page.getByTestId("notifications")).toContainText("WhatsApp · Order received");
-  await expect(page.getByTestId("next-action")).toContainText("Nothing to do for now");
+  // Updates say when they were sent, to the minute (India time).
+  await expect(page.getByTestId("notifications")).toHaveText("WhatsApp · 15 Jul, 10:42 — Order received");
+  // What happens next, and by when.
+  await expect(page.getByTestId("next-action")).toContainText("What happens next");
+  await expect(page.getByTestId("next-sentence")).toHaveText(
+    "We're checking that your site can get the service. Then you pick a time for the installation visit. Ready by 20 Jul.",
+  );
 });
 
 test("KYC fixes are listed when a document needs work", async ({ page }) => {
@@ -120,11 +131,22 @@ test("KYC fixes are listed when a document needs work", async ({ page }) => {
   await expect(page.getByTestId("order-eta")).toContainText("the clock starts once your documents are verified");
 });
 
-test("SLA breach is shown to the owner", async ({ page }) => {
+test("a late order says sorry, gives a new date and offers a call", async ({ page }) => {
   await signedIn(page);
-  await mock(page, { get: order("INSTALL_SCHEDULED", "NONE", { sla: { due: "2026-08-05", breached: true } }) });
+  const late = { sla: { due: "2026-08-05", breached: true }, late: { new_date: "2026-08-09" } };
+  let called = 0;
+  await mock(page, { get: order("FEASIBILITY_CHECK", "NONE", late) });
+  await page.route(`**/api/v1/orders/${ID}/callback`, (route) => {
+    called += 1;
+    return route.fulfill({ json: order("FEASIBILITY_CHECK", "NONE", { ...late, callback_requested: true }) });
+  });
   await page.goto(`/en/track/${ID}`);
-  await expect(page.getByTestId("sla")).toContainText("Our team has been alerted");
+  const banner = page.getByTestId("sla");
+  await expect(banner).toContainText("Sorry, your order is taking longer than we promised.");
+  await expect(banner.getByTestId("late-date")).toHaveText("New date: 9 Aug.");
+  await banner.getByRole("button", { name: "Call me" }).click();
+  await expect(banner.getByTestId("late-called")).toContainText("Someone from our team will call you soon");
+  expect(called).toBe(1);
 });
 
 test("NOT_FEASIBLE offers the wireless alternative and the refund (TR-06)", async ({ page }) => {
@@ -189,4 +211,80 @@ test("order list links to each tracker, in Hindi", async ({ page }) => {
   await page.goto("/hi/track");
   await expect(page.getByTestId("orders")).toContainText("इंस्टॉलेशन बुक");
   await expect(page.getByTestId("orders").getByRole("link")).toHaveAttribute("href", `/hi/track/${ID}`);
+});
+
+// ------------------------------------------------------------------ installation visit (Phase 4)
+
+const CALENDAR = [
+  { date: "2026-07-16", free: ["MORNING", "AFTERNOON", "EVENING"] },
+  { date: "2026-07-17", free: ["AFTERNOON"] },
+  { date: "2026-07-18", free: ["MORNING", "EVENING"] },
+];
+
+test("pick a time for the installation visit, then move it", async ({ page }) => {
+  await signedIn(page);
+  const booked: { date: string; window: string }[] = [];
+  await mock(page, { get: order("INSTALL_SCHEDULED", "NONE", { calendar: CALENDAR }) });
+  await page.route(`**/api/v1/orders/${ID}/slot`, (route) => {
+    const body = route.request().postDataJSON() as { date: string; window: string };
+    booked.push(body);
+    return route.fulfill({
+      json: order("INSTALL_SCHEDULED", "NONE", {
+        calendar: CALENDAR,
+        slot: { ...body, changes_left: 3 - booked.length + 1, can_change: true, why_not: null },
+        notifications: [
+          { channel: "WHATSAPP", template: "INSTALL_SLOT", state: "INSTALL_SCHEDULED", status: "SENT", at: "2026-07-15T11:05:00+05:30" },
+        ],
+      }),
+    });
+  });
+  await page.goto(`/en/track/${ID}`);
+  await expect(page.getByTestId("next-sentence")).toHaveText(
+    "Your site can get the service. Pick a time for the installation visit.",
+  );
+  const picker = page.getByTestId("visit-picker");
+  await expect(picker).toContainText("You can change it until the day before.");
+  await picker.getByTestId("visit-day-2026-07-17").click();
+  // Full windows can't be picked.
+  await expect(picker.getByTestId("visit-window-MORNING")).toBeDisabled();
+  await picker.getByTestId("visit-window-AFTERNOON").click();
+  await picker.getByRole("button", { name: "Book Fri, 17 Jul, 2–5 pm" }).click();
+  expect(booked.at(-1)).toEqual({ date: "2026-07-17", window: "AFTERNOON" });
+  await expect(page.getByTestId("next-sentence")).toHaveText(
+    "Please keep someone at the shop on Fri, 17 Jul, 2–5 pm. The engineer calls before coming.",
+  );
+  await expect(page.getByTestId("notifications")).toHaveText("WhatsApp · 15 Jul, 11:05 — Installation visit booked");
+
+  // Move it.
+  await page.getByTestId("visit-change").click();
+  await page.getByTestId("visit-day-2026-07-18").click();
+  await page.getByTestId("visit-window-EVENING").click();
+  await page.getByTestId("visit-book").click();
+  expect(booked.at(-1)).toEqual({ date: "2026-07-18", window: "EVENING" });
+  await expect(page.getByTestId("next-sentence")).toContainText("Sat, 18 Jul, 5–7 pm");
+});
+
+test("a visit that can no longer move says what to do instead", async ({ page }) => {
+  await signedIn(page);
+  await mock(page, {
+    get: order("INSTALL_SCHEDULED", "NONE", {
+      slot: { date: "2026-07-15", window: "MORNING", changes_left: 3, can_change: false, why_not: "TOO_LATE_TO_CHANGE" },
+    }),
+  });
+  await page.goto(`/en/track/${ID}`);
+  await expect(page.getByTestId("visit-locked")).toHaveText(
+    "The visit is today, so it can't be moved here. Ask us to call you if you need to.",
+  );
+  await expect(page.getByTestId("visit-change")).toHaveCount(0);
+});
+
+test("the visit picker in Hindi fits a phone", async ({ page }) => {
+  await signedIn(page);
+  await mock(page, { get: order("INSTALL_SCHEDULED", "NONE", { calendar: CALENDAR }) });
+  await page.goto(`/hi/track/${ID}`);
+  await expect(page.getByTestId("next-action")).toContainText("आगे क्या होगा");
+  await page.getByTestId("visit-day-2026-07-16").click();
+  await expect(page.getByTestId("visit-window-MORNING")).toHaveText("सुबह 10–दोपहर 1");
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+  expect(overflow).toBe(false);
 });

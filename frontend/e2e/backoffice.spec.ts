@@ -77,6 +77,25 @@ async function mock(page: Page, role: keyof typeof PERMS) {
     if (path === "/me") return route.fulfill({ json: me(role) });
     if (path === "/leads") return route.fulfill({ json: { total: 1, offset: 0, limit: 25, model_available: true, leads: [LEAD] } });
     if (path === "/sessions") return route.fulfill({ json: { idle_minutes: 30, sessions: [] } });
+    if (path === "/sla-breaches") {
+      return route.fulfill({
+        json: {
+          orders: [
+            {
+              order_id: "e1149764-0000-4000-8000-000000000000",
+              state: "INSTALL_SCHEDULED",
+              created_at: "2026-06-23T10:00:00+05:30",
+              age_days: 22,
+              sla_due: "2026-07-14",
+              eta: "2026-07-20",
+              alerted_at: "2026-07-15T10:00:00+05:30",
+              callback_requested_at: "2026-07-15T10:05:00+05:30",
+              products: ["Biz Fibre 100"],
+            },
+          ],
+        },
+      });
+    }
     if (path === "/review-queue") return route.fulfill({ json: { items: seen.decide.length ? [] : [ITEM] } });
     if (path === "/reveal") {
       seen.reveal.push(req.postDataJSON());
@@ -155,4 +174,13 @@ test("Hindi back office", async ({ page }) => {
   await page.goto("/hi/backoffice");
   await expect(page.getByRole("heading", { name: "बैक ऑफ़िस" })).toBeVisible();
   await expect(page.getByTestId("staff-login")).toContainText("स्टाफ़ साइन-इन");
+});
+
+test("SLA breaches flag a late order whose owner asked for a call", async ({ page }) => {
+  await mock(page, "sales");
+  await signIn(page);
+  await page.getByRole("tab", { name: "SLA breaches" }).click();
+  const row = page.getByTestId("sla-order");
+  await expect(row).toContainText("Day 22");
+  await expect(row.getByTestId("sla-call-me")).toHaveText("Owner asked us to call — call first");
 });

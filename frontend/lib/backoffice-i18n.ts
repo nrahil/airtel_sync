@@ -60,7 +60,7 @@ const en = {
     handled: "Mark handled",
     done: "Saved: {status}",
   },
-  sla: { age: "Day {n}", due: "Due {date}", advance: "Move to {state}" },
+  sla: { age: "Day {n}", due: "Due {date}", advance: "Move to {state}", callMe: "Owner asked us to call — call first" },
   model: {
     auc: "Holdout AUC (June)",
     baselines: "Baselines: random {random} · GSTIN only {gstin}",
@@ -141,7 +141,7 @@ const hi = {
     handled: "निपटाया गया",
     done: "सहेजा गया: {status}",
   },
-  sla: { age: "दिन {n}", due: "नियत {date}", advance: "{state} पर ले जाएँ" },
+  sla: { age: "दिन {n}", due: "नियत {date}", advance: "{state} पर ले जाएँ", callMe: "मालिक ने कॉल करने को कहा — पहले कॉल करें" },
   model: {
     auc: "होल्डआउट AUC (जून)",
     baselines: "आधार: रैंडम {random} · सिर्फ़ GSTIN {gstin}",

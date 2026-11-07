@@ -23,7 +23,12 @@ from app.config import Clock, get_clock
 from app.db.models import ConsentPurpose, KycApplication, Order
 from app.kyc.adapters import DIGILOCKER_SLOTS, DigiLockerStatus
 from app.kyc.messages import fix_message
-from app.kyc.service import KycService, ManualEntryNotAllowedError, NothingOnRecordError
+from app.kyc.service import (
+    KycLockedError,
+    KycService,
+    ManualEntryNotAllowedError,
+    NothingOnRecordError,
+)
 from app.kyc.types import ApplicationContext, Check, CheckStatus, DocSlot
 from app.kyc.upload_guard import MAX_UPLOAD_BYTES, UploadRejectedError
 
@@ -63,6 +68,16 @@ class DigiLockerAnswer(BaseModel):
     allow: bool
 
 
+class OnRecordEdit(BaseModel):
+    """Only the fields sent change; ``null`` removes one (e.g. "I have no Udyam number")."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    contact_name: Annotated[str | None, Field(max_length=120)] = None
+    gstin: Annotated[str | None, Field(max_length=20)] = None
+    udyam_number: Annotated[str | None, Field(max_length=25)] = None
+
+
 class ManualEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -91,6 +106,8 @@ def _summary(app: KycApplication, service: KycService) -> dict[str, Any]:
         "verdict": app.last_verdict,
         # Which numbers the owner gave (booleans only): the UI offers "verify online".
         "on_record": service.on_record(app),
+        # The same details, masked, so the owner can see what they gave and fix it.
+        "on_record_masked": service.on_record_masked(app),
     }
 
 
@@ -231,6 +248,34 @@ def fetch_from_digilocker(
     if outcome is DigiLockerStatus.CONSENT_DECLINED:
         raise HTTPException(status.HTTP_409_CONFLICT, {"code": "DIGILOCKER_DECLINED"})
     return _summary(app, _service(request))
+
+
+@router.patch("/applications/{application_id}/on-record")
+def edit_on_record(
+    application_id: str, body: OnRecordEdit, request: Request, db: Db, principal: KycPrincipal
+) -> dict[str, Any]:
+    """Fix the name / GSTIN / Udyam number given at the start (a typo, the wrong number)."""
+    app = _owned(db, principal, application_id)
+    sent = body.model_dump(exclude_unset=True)
+    if not sent:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, {"code": "NOTHING_TO_CHANGE"})
+    field = {
+        "contact_name": "contact_name",
+        "gstin": "gstin_on_record",
+        "udyam_number": "udyam_on_record",
+    }
+    changes: dict[str, str | None] = {}
+    for key, value in sent.items():
+        text = (value or "").strip()
+        changes[field[key]] = (text if key == "contact_name" else text.upper()) or None
+    try:
+        changed, dropped = _service(request).update_on_record(db, app, changes)
+    except KycLockedError:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"code": "KYC_VERIFIED_LOCKED"}) from None
+    body_out = _summary(app, _service(request))
+    body_out["changed"] = changed
+    body_out["documents_dropped"] = dropped
+    return body_out
 
 
 @router.post("/applications/{application_id}/visit")

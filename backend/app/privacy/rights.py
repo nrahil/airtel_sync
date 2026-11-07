@@ -41,7 +41,6 @@ from app.db.models import (
     ConsentPurpose,
     KycApplication,
     KycDocument,
-    KycStatus,
     Order,
     OrderState,
     OtpChallenge,
@@ -51,9 +50,8 @@ from app.db.models import (
     ReviewStatus,
     VaultEntry,
 )
-from app.kyc.service import KycService
+from app.kyc.service import KycLockedError, KycService
 from app.kyc.storage import BlobIntegrityError
-from app.kyc.types import ApplicationContext
 from app.orders.notifications import OrderNotifier
 from app.orders.service import TrackerService
 from app.orders.state_machine import OWNER_CANCELLABLE
@@ -336,23 +334,11 @@ class PrivacyRights:
         unknown = set(changes) - set(CORRECTABLE)
         if unknown or not changes:
             raise RightsError(422, "NOTHING_TO_CORRECT")
-        if app.status is KycStatus.PASS:
-            raise RightsError(409, "KYC_VERIFIED_LOCKED")
-        current = self.kyc.context(app).model_dump()
-        updated = ApplicationContext.model_validate({**current, **changes})
-        changed = sorted(k for k in changes if current.get(k) != getattr(updated, k))
-        if changed:
-            self.kyc.set_context(app, updated)
-            app.status = KycStatus.DRAFT  # re-checked on the next submit
-            app.last_verdict = None
-            AuditLog(self.db, self.clock).append(
-                actor=principal,
-                action="DATA_CORRECTED",
-                entity_type="kyc_application",
-                entity_id=app.id,
-                detail={"fields": changed},  # names only, never values
-            )
-        self.db.commit()
+        try:
+            # Same rules as the KYC screen's "Edit": stale online / DigiLocker checks go.
+            self.kyc.update_on_record(self.db, app, dict(changes))
+        except KycLockedError:
+            raise RightsError(409, "KYC_VERIFIED_LOCKED") from None
         return app
 
     # -------------------------------------------------------------- erasure
