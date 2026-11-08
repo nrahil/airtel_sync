@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Final
 
 DEFAULT_PASSWORD: Final = "demo-password-2026"  # noqa: S105  gitleaks:allow - throw-away demo users
+NAMED_ADMIN_PASSWORD: Final = "admin1234udyam"  # noqa: S105  gitleaks:allow - demo-only adminudyam
 _WINDOWS_TESSERACT: Final = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
 
 _RAISED_LIMITS: Final = {
@@ -109,6 +110,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     from scripts import create_staff
 
     if create_staff.main(["--demo"]) != 0:
+        return 2
+    os.environ["STAFF_PASSWORD"] = NAMED_ADMIN_PASSWORD
+    if create_staff.main(["--username", "adminudyam", "--role", "admin"]) != 0:
         return 2
     print(f"state: {state} - PWA origin(s): {', '.join(args.origin)}", flush=True)
     uvicorn.run(create_app(), host="127.0.0.1", port=args.port, server_header=False)
