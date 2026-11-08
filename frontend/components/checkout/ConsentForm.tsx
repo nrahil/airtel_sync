@@ -109,7 +109,7 @@ export function ConsentForm({
       </Link>
 
       {missingRequired && <p className="text-sm text-neutral-600 dark:text-neutral-300">{t.consent.needRequired}</p>}
-      <button type="submit" disabled={busy} className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50">
+      <button type="submit" disabled={busy} className="min-h-12 rounded-xl bg-red-700 px-4 py-2 font-medium text-white disabled:opacity-50">
         {t.consent.save}
       </button>
       {message && (

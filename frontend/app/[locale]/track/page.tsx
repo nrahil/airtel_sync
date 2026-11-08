@@ -15,7 +15,7 @@ export default async function TrackListPage({ params }: { params: Promise<{ loca
   if (!isLocale(locale)) notFound();
   const t = messagesFor(locale);
   return (
-    <main lang={bcp47(locale)} className="mx-auto flex min-h-dvh max-w-md flex-col gap-4 px-4 py-6">
+    <main lang={bcp47(locale)} className="page-column">
       <Link href={`/${locale}`} className="self-start text-sm text-neutral-500 underline" data-testid="home">
         ← {t.advisor.home}
       </Link>

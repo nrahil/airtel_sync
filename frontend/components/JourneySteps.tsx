@@ -31,19 +31,19 @@ export function JourneySteps({
             />
           );
           return (
-            <li key={label} aria-current={state === "current" ? "step" : undefined} className="flex flex-col gap-1">
+            <li key={label} aria-current={state === "current" ? "step" : undefined} className="flex min-w-0 flex-col gap-1">
               {href ? (
                 // A step already done: tap it to go back (a full-height target, not just the label).
                 <Link href={href} data-testid={`journey-back-${step}`} className="flex flex-col gap-1 rounded py-1 -my-1">
                   {bar}
-                  <span className="truncate text-xs text-red-800 underline dark:text-red-200">
+                  <span className="text-xs leading-tight break-words text-red-800 underline dark:text-red-200">
                     ← {label}
                   </span>
                 </Link>
               ) : (
                 <>
                   {bar}
-                  <span className={`truncate text-xs ${state === "current" ? "font-semibold" : "text-neutral-500"}`}>
+                  <span className={`text-xs leading-tight break-words ${state === "current" ? "font-semibold" : "text-neutral-500"}`}>
                     {label}
                   </span>
                 </>

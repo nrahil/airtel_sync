@@ -306,20 +306,20 @@ export function Tracker({ locale, t, orderId }: { locale: Locale; t: Messages; o
       </section>
 
       <div className="flex flex-wrap gap-3">
-        <button type="button" disabled={busy} onClick={() => void load()} className="h-11 rounded-xl px-4 ring-1 ring-neutral-300 disabled:opacity-50 dark:ring-neutral-600">
+        <button type="button" disabled={busy} onClick={() => void load()} className="min-h-11 rounded-xl py-2 px-4 ring-1 ring-neutral-300 disabled:opacity-50 dark:ring-neutral-600">
           {t.track.refresh}
         </button>
         {tr.can_cancel && !confirmCancel && (
-          <button type="button" disabled={busy} onClick={() => setConfirmCancel(true)} className="h-11 rounded-xl px-4 text-red-700 ring-1 ring-red-300 disabled:opacity-50">
+          <button type="button" disabled={busy} onClick={() => setConfirmCancel(true)} className="min-h-11 rounded-xl py-2 px-4 text-red-700 ring-1 ring-red-300 disabled:opacity-50">
             {t.track.cancel}
           </button>
         )}
         {confirmCancel && (
           <>
-            <button type="button" disabled={busy} onClick={() => void act(() => cancelOrder(order.order_id))} className="h-11 rounded-xl bg-red-700 px-4 text-white disabled:opacity-50">
+            <button type="button" disabled={busy} onClick={() => void act(() => cancelOrder(order.order_id))} className="min-h-11 rounded-xl py-2 bg-red-700 px-4 text-white disabled:opacity-50">
               {t.track.cancelConfirm}
             </button>
-            <button type="button" disabled={busy} onClick={() => setConfirmCancel(false)} className="h-11 rounded-xl px-4 ring-1 ring-neutral-300">
+            <button type="button" disabled={busy} onClick={() => setConfirmCancel(false)} className="min-h-11 rounded-xl py-2 px-4 ring-1 ring-neutral-300">
               {t.track.keep}
             </button>
           </>

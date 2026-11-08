@@ -61,7 +61,7 @@ function Input({
   switch (question.kind) {
     case "choice":
       return (
-        <div role="group" className="grid gap-2" data-testid={`form-${question.slot}`}>
+        <div role="group" className="grid gap-2 sm:grid-cols-2" data-testid={`form-${question.slot}`}>
           {question.options.map((code) => (
             <button key={code} type="button" disabled={disabled} className={button} onClick={() => onAnswer(question.slot, code, label(code))}>
               {label(code)}
@@ -126,7 +126,7 @@ function Input({
           <button
             type="button"
             disabled={disabled}
-            className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50"
+            className="min-h-12 rounded-xl bg-red-700 px-4 py-2 font-medium text-white disabled:opacity-50"
             onClick={() =>
               onAnswer(question.slot, picked, picked.length ? picked.map(label).join(", ") : t.advisor.noneOfThese)
             }
@@ -163,7 +163,7 @@ function Input({
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder={isNumber ? t.advisor.numberPlaceholder : t.advisor.cityPlaceholder}
-            className="h-12 flex-1 rounded-xl border border-neutral-300 px-3 text-base dark:border-neutral-600 dark:bg-neutral-900"
+            className="h-12 min-w-0 flex-1 rounded-xl border border-neutral-300 px-3 text-base dark:border-neutral-600 dark:bg-neutral-900"
           />
           {question.suggestions && (
             <datalist id={`suggest-${question.slot}`}>
@@ -172,7 +172,7 @@ function Input({
               ))}
             </datalist>
           )}
-          <button type="submit" disabled={disabled || !valid} className="h-12 rounded-xl bg-red-700 px-4 font-medium text-white disabled:opacity-50">
+          <button type="submit" disabled={disabled || !valid} className="min-h-12 rounded-xl bg-red-700 px-4 py-2 font-medium text-white disabled:opacity-50">
             {t.advisor.next}
           </button>
         </form>

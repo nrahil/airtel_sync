@@ -51,3 +51,21 @@ test("AC-09: pages carry the security headers and run cleanly under the CSP", as
   }
   expect(violations).toEqual([]);
 });
+
+for (const [device, width, height] of [
+  ["small phone", 320, 640],
+  ["tablet", 768, 1024],
+  ["laptop", 1024, 768],
+  ["desktop", 1440, 900],
+] as const) {
+  test(`no sideways scrolling on a ${device}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    for (const path of ["/en", "/ta/advisor", "/en/track", "/en/privacy", "/en/backoffice"]) {
+      await page.goto(path);
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      );
+      expect(overflow, path).toBe(false);
+    }
+  });
+}

@@ -49,6 +49,8 @@ const NEXT_STEP: Record<string, string> = {
 
 const card = "rounded-2xl bg-white p-4 shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-700";
 const button = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
+/** One card per row on phones and tablets, two side by side on a desktop. */
+const cardList = "grid grid-cols-1 items-start gap-3 lg:grid-cols-2";
 
 /** Staff console: sign-in, then the tabs this role may use. PII stays masked until revealed. */
 export function Backoffice({ locale, t }: { locale: Locale; t: T }) {
@@ -469,7 +471,7 @@ function Leads({ t, me, lang }: { t: T; me: StaffMe; lang: StaffLang }) {
       </div>
       {!data.model_available && <p className="text-sm text-amber-700">{t.leads.noModel}</p>}
       {rows.length === 0 && <p>{t.empty}</p>}
-      <ul className="flex flex-col gap-3">
+      <ul className={cardList}>
         {rows.map((row) =>
           row.kind === "session" ? (
             <SessionCard key={row.key} s={row.session} t={t} lang={lang} canAssign={canAssign} fromApp onChange={() => void reload()} />
@@ -606,7 +608,7 @@ function Sessions({ t, me, lang }: { t: T; me: StaffMe; lang: StaffLang }) {
   return (
     <section className="flex flex-col gap-3" data-testid="sessions">
       {data.sessions.length === 0 && <p>{t.empty}</p>}
-      <ul className="flex flex-col gap-3">
+      <ul className={cardList}>
         {data.sessions.map((s: SessionRow) => (
           <SessionCard key={s.session_id} s={s} t={t} lang={lang} canAssign={canAssign} onChange={() => void reload()} />
         ))}
@@ -622,7 +624,7 @@ function Review({ t }: { t: T }) {
   return (
     <section className="flex flex-col gap-3" data-testid="review">
       {data.items.length === 0 && <p>{t.empty}</p>}
-      <ul className="flex flex-col gap-3">
+      <ul className={cardList}>
         {data.items.map((item) => (
           <ReviewCard key={item.item_id} item={item} t={t} onDone={() => void reload()} />
         ))}
@@ -708,7 +710,7 @@ function Orders({ t }: { t: T }) {
     <section className="flex flex-col gap-3" data-testid="orders">
       <p className="text-sm text-neutral-600 dark:text-neutral-300">{t.orders.hint}</p>
       {data.orders.length === 0 && <p>{t.empty}</p>}
-      <ul className="flex flex-col gap-3">
+      <ul className={cardList}>
         {data.orders.map((o) => (
           <OrderCard key={o.order_id} o={o} t={t} onChange={() => void reload()} />
         ))}
@@ -800,7 +802,7 @@ function Sla({ t, me }: { t: T; me: StaffMe }) {
   return (
     <section className="flex flex-col gap-3" data-testid="sla">
       {data.orders.length === 0 && <p>{t.empty}</p>}
-      <ul className="flex flex-col gap-3">
+      <ul className={cardList}>
         {data.orders.map((o: SlaRow) => (
           <li key={o.order_id} className={`${card} flex flex-col gap-2`} data-testid="sla-order">
             <p className="font-semibold">
@@ -843,7 +845,7 @@ function Model({ t }: { t: T }) {
   if (!data.available || !data.metrics) return <p>{t.leads.noModel}</p>;
   const m = data.metrics;
   return (
-    <section className={`${card} flex flex-col gap-3`} data-testid="model">
+    <section className={`${card} flex max-w-3xl flex-col gap-3`} data-testid="model">
       <div className="grid grid-cols-2 gap-3">
         <div>
           <p className="text-xs text-neutral-500">{t.model.auc}</p>

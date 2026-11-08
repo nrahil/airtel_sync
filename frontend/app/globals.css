@@ -25,3 +25,27 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
 }
+
+/* Focused, one-task screens: a readable column that grows a little with the screen. */
+@utility page-column {
+  @apply mx-auto flex min-h-dvh w-full max-w-md flex-col gap-4 px-4 py-6 sm:max-w-xl sm:px-6 sm:py-8 lg:max-w-2xl;
+}
+
+/* Screens with side-by-side content (quote builder, back office). */
+@utility page-wide {
+  @apply mx-auto flex min-h-dvh w-full max-w-2xl flex-col gap-4 px-4 py-6 sm:px-6 sm:py-8 md:max-w-4xl lg:max-w-6xl lg:px-8;
+}
+
+/* Long IDs and names wrap instead of pushing the page sideways. */
+body {
+  overflow-wrap: break-word;
+}
+
+/* iOS zooms the page when a focused field is under 16px. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"], [type="radio"], [type="file"]),
+  select,
+  textarea {
+    font-size: max(1rem, 1em);
+  }
+}

@@ -399,7 +399,7 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
           </p>
         )}
         <p className="text-xs text-neutral-500">{t.kyc.privacy}</p>
-        <button type="submit" disabled={busy} className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50">
+        <button type="submit" disabled={busy} className="min-h-12 rounded-xl bg-red-700 px-4 py-2 font-medium text-white disabled:opacity-50">
           {t.kyc.start}
         </button>
         {needsConsent && consentLink}
@@ -545,7 +545,7 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
                 </div>
               ))}
               <div className="flex gap-2">
-                <button type="submit" disabled={busy} className="h-11 rounded-xl bg-red-700 px-4 font-medium text-white disabled:opacity-50">
+                <button type="submit" disabled={busy} className="min-h-11 rounded-xl py-2 bg-red-700 px-4 font-medium text-white disabled:opacity-50">
                   {t.kyc.saveDetails}
                 </button>
                 <button
@@ -555,7 +555,7 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
                     setEdits(EMPTY_EDIT);
                     setRemoved({});
                   }}
-                  className="h-11 rounded-xl px-4 ring-1 ring-neutral-300 dark:ring-neutral-600"
+                  className="min-h-11 rounded-xl py-2 px-4 ring-1 ring-neutral-300 dark:ring-neutral-600"
                 >
                   {t.kyc.cancelEdit}
                 </button>
@@ -740,7 +740,7 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
             data-testid="kyc-submit"
             disabled={busy || app.documents.length === 0}
             onClick={() => void check()}
-            className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50"
+            className="min-h-12 rounded-xl bg-red-700 px-4 py-2 font-medium text-white disabled:opacity-50"
           >
             {busy ? t.kyc.checking : t.kyc.submit}
           </button>

@@ -265,7 +265,7 @@ export function Checkout({ locale, t }: { locale: Locale; t: Messages }) {
           type="button"
           disabled={busy}
           onClick={() => void confirm()}
-          className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50"
+          className="min-h-12 rounded-xl bg-red-700 px-4 py-2 font-medium text-white disabled:opacity-50"
         >
           {busy ? t.checkout.placing : t.checkout.placeOrder}
         </button>
@@ -337,7 +337,7 @@ export function Checkout({ locale, t }: { locale: Locale; t: Messages }) {
                 type="button"
                 disabled={busy}
                 onClick={() => void pay()}
-                className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50"
+                className="min-h-12 rounded-xl bg-red-700 px-4 py-2 font-medium text-white disabled:opacity-50"
               >
                 {busy
                   ? t.checkout.paying

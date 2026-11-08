@@ -64,7 +64,7 @@ export function OtpStep({ t, onVerified }: { t: Messages; onVerified: () => void
       <p className="text-sm text-neutral-600 dark:text-neutral-300">{t.otp.intro}</p>
       {!challenge ? (
         <form onSubmit={(e) => void send(e)} className="flex items-end gap-2">
-          <label className="flex flex-1 flex-col gap-1 text-sm">
+          <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
             {t.otp.phone}
             <input
               type="tel"
@@ -73,13 +73,13 @@ export function OtpStep({ t, onVerified }: { t: Messages; onVerified: () => void
               maxLength={16}
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
-              className="h-12 rounded-xl border border-neutral-300 px-3 text-base dark:border-neutral-600 dark:bg-neutral-900"
+              className="h-12 w-full rounded-xl border border-neutral-300 px-3 text-base dark:border-neutral-600 dark:bg-neutral-900"
             />
           </label>
           <button
             type="submit"
             disabled={busy || phone.replace(/\D/g, "").length < 10}
-            className="h-12 rounded-xl bg-red-700 px-4 font-medium text-white disabled:opacity-50"
+            className="min-h-12 rounded-xl bg-red-700 px-4 py-2 font-medium text-white disabled:opacity-50"
           >
             {t.otp.send}
           </button>
@@ -87,7 +87,7 @@ export function OtpStep({ t, onVerified }: { t: Messages; onVerified: () => void
       ) : (
         <form onSubmit={(e) => void verify(e)} className="flex flex-col gap-2">
           <div className="flex items-end gap-2">
-            <label className="flex flex-1 flex-col gap-1 text-sm">
+            <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
               {t.otp.code}
               <input
                 inputMode="numeric"
@@ -96,13 +96,13 @@ export function OtpStep({ t, onVerified }: { t: Messages; onVerified: () => void
                 maxLength={6}
                 value={code}
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                className="h-12 rounded-xl border border-neutral-300 px-3 text-base tracking-widest dark:border-neutral-600 dark:bg-neutral-900"
+                className="h-12 w-full rounded-xl border border-neutral-300 px-3 text-base tracking-widest dark:border-neutral-600 dark:bg-neutral-900"
               />
             </label>
             <button
               type="submit"
               disabled={busy || code.length !== 6}
-              className="h-12 rounded-xl bg-red-700 px-4 font-medium text-white disabled:opacity-50"
+              className="min-h-12 rounded-xl bg-red-700 px-4 py-2 font-medium text-white disabled:opacity-50"
             >
               {t.otp.verify}
             </button>

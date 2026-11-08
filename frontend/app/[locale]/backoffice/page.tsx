@@ -17,7 +17,7 @@ export default async function BackofficePage({ params }: { params: Promise<{ loc
   if (!isLocale(locale)) notFound();
   const t = backofficeMessages(locale);
   return (
-    <main lang={bcp47(locale)} className="mx-auto flex min-h-dvh max-w-4xl flex-col gap-4 px-4 py-6">
+    <main lang={bcp47(locale)} className="page-wide">
       <h1 className="text-2xl font-semibold tracking-tight">{t.title}</h1>
       <Backoffice locale={locale} t={t} />
     </main>

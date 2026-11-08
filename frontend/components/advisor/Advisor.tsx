@@ -221,7 +221,7 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
 
   const chatForm = (placeholder: string) => (
     <>
-    <form onSubmit={submitText} className="flex items-end gap-2">
+    <form onSubmit={submitText} className="flex flex-wrap items-end gap-2">
       <label className="sr-only" htmlFor="advisor-input">
         {placeholder}
       </label>
@@ -233,7 +233,7 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
         onChange={(e) => setDraft(e.target.value)}
         placeholder={placeholder}
         lang={bcp47(locale)}
-        className="min-h-12 flex-1 resize-none rounded-xl border border-neutral-300 px-3 py-2 text-base dark:border-neutral-600 dark:bg-neutral-900"
+        className="min-h-12 min-w-40 flex-1 resize-none rounded-xl border border-neutral-300 px-3 py-2 text-base dark:border-neutral-600 dark:bg-neutral-900"
       />
       <VoiceButton
         locale={locale}
@@ -245,7 +245,7 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
       <button
         type="submit"
         disabled={busy || !draft.trim()}
-        className="h-12 rounded-xl bg-red-700 px-4 font-medium text-white disabled:opacity-50"
+        className="min-h-12 rounded-xl bg-red-700 px-4 py-2 font-medium text-white disabled:opacity-50"
       >
         {t.advisor.send}
       </button>
@@ -375,7 +375,7 @@ export function Advisor({ locale, t }: { locale: Locale; t: Messages }) {
             type="button"
             onClick={() => void customise()}
             disabled={busy || !sessionId}
-            className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50"
+            className="min-h-12 rounded-xl bg-red-700 px-4 py-2 font-medium text-white disabled:opacity-50"
           >
             {t.quote.customise}
           </button>

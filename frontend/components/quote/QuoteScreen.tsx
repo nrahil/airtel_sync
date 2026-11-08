@@ -133,6 +133,18 @@ export function QuoteScreen({ locale, t }: { locale: Locale; t: Messages }) {
   const inPlan = quote.options.filter((o) => o.in_bundle);
   const others = quote.options.filter((o) => !o.in_bundle);
 
+  const continueButton = (
+    <button
+      type="button"
+      disabled={busy || expired || !editable || cascade !== null}
+      onClick={() => router.push(`/${locale}/checkout?q=${encodeURIComponent(quote.quote_id)}`)}
+      className="min-h-12 w-full rounded-xl bg-red-700 px-4 py-2 font-medium text-white disabled:opacity-50"
+    >
+      {t.quote.continue} · {formatPaise(totals.monthly_total_paise)}
+      {t.quote.perMonth}
+    </button>
+  );
+
   return (
     <div className="flex flex-col gap-5">
       <JourneySteps t={t} current={1} />
@@ -145,111 +157,113 @@ export function QuoteScreen({ locale, t }: { locale: Locale; t: Messages }) {
           {t.quote.changeAnswers}
         </Link>
       )}
-      {refreshedFrom !== null && (
-        <p role="status" data-testid="refreshed" className="rounded-xl bg-green-50 p-3 text-green-900 dark:bg-green-950 dark:text-green-100">
-          {rupeeDifference(refreshedFrom, totals.monthly_total_paise) === 0
-            ? fill(t.quote.refreshedSame, { amount: formatPaise(totals.monthly_total_paise) })
-            : fill(t.quote.refreshedChanged, { old: formatPaise(refreshedFrom), new: formatPaise(totals.monthly_total_paise) })}
-        </p>
-      )}
-      {editable && !expired && quote.plans && quote.plans.length > 0 && (
-        <PlanChooser plans={quote.plans} t={t} busy={busy} onPick={(plan) => void send(plan.items, chosenContract)} />
-      )}
-      <article
-        data-testid="quote"
-        className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-700"
-      >
-        <ul className="flex flex-col divide-y divide-neutral-100 dark:divide-neutral-800" data-testid="quote-lines">
-          {quote.lines.map((line) => (
-            <li key={line.product_id} className="flex items-baseline justify-between gap-3 py-2">
-              <span>
-                {line.product_name}
-                {line.qty > 1 && (
-                  <span className="text-sm text-neutral-500">
-                    {" "}
-                    · {t.quote.qty} {line.qty}
-                  </span>
-                )}
-              </span>
-              <span className="whitespace-nowrap tabular-nums">{formatPaise(line.line_total_paise)}</span>
-            </li>
-          ))}
-        </ul>
-        <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-sm">
-          <dt>{t.quote.subtotal}</dt>
-          <dd className="text-right tabular-nums">{formatPaise(totals.monthly_subtotal_paise)}</dd>
-          <dt>{fill(t.quote.gst, { rate: gstRate })}</dt>
-          <dd className="text-right tabular-nums" data-testid="gst">
-            {formatPaise(totals.monthly_gst_paise)}
-          </dd>
-          <dt className="text-base font-semibold">{t.quote.monthlyTotal}</dt>
-          <dd className="text-right text-xl font-semibold tabular-nums" data-testid="monthly-total">
-            {formatPaise(totals.monthly_total_paise)}
-            <span className="text-sm font-normal text-neutral-500">{t.quote.perMonth}</span>
-          </dd>
-          <dt>
-            {t.quote.setup} <span className="text-neutral-500">({t.quote.gstIncluded})</span>
-          </dt>
-          <dd className="text-right tabular-nums" data-testid="setup-total">
-            {formatPaise(totals.setup_total_paise)}
-          </dd>
-        </dl>
-        <ContractChoice quote={quote} t={t} busy={busy} editable={editable && !expired} onPick={(m) => void send(items, m)} />
-        {totals.savings_paise > 0 && (
-          <p className="text-sm text-green-700 dark:text-green-400" data-testid="bundle-discount">
-            {fill(t.quote.savings, { amount: formatPaise(totals.savings_paise) })}
-          </p>
-        )}
-        <PayBox quote={quote} t={t} />
-        <p className="text-xs text-neutral-500">{fill(t.quote.validUntil, { date: validUntil })}</p>
-      </article>
-
-      {busy && <p className="text-sm text-neutral-500">{t.quote.updating}</p>}
-      {failed === "error" && (
-        <p role="alert" className="text-sm text-red-700">
-          {t.advisor.error}
-        </p>
-      )}
-
-      {expired && (
-        <div role="alert" className="flex flex-col gap-2 rounded-xl bg-amber-50 p-3 text-amber-900 dark:bg-amber-950 dark:text-amber-100">
-          <p>{t.quote.expired}</p>
-          <button type="button" onClick={() => void refresh()} disabled={busy} className="self-start rounded-lg bg-amber-700 px-3 py-2 text-white">
-            {t.quote.refresh}
-          </button>
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-[minmax(0,1fr)_20rem] md:grid-rows-[auto_1fr] md:gap-x-6 md:gap-y-0 lg:grid-cols-[minmax(0,1fr)_26rem] lg:gap-x-8">
+        <div className="flex flex-col gap-5 empty:hidden md:col-start-1 md:mb-5">
+          {refreshedFrom !== null && (
+            <p role="status" data-testid="refreshed" className="rounded-xl bg-green-50 p-3 text-green-900 dark:bg-green-950 dark:text-green-100">
+              {rupeeDifference(refreshedFrom, totals.monthly_total_paise) === 0
+                ? fill(t.quote.refreshedSame, { amount: formatPaise(totals.monthly_total_paise) })
+                : fill(t.quote.refreshedChanged, { old: formatPaise(refreshedFrom), new: formatPaise(totals.monthly_total_paise) })}
+            </p>
+          )}
+          {editable && !expired && quote.plans && quote.plans.length > 0 && (
+            <PlanChooser plans={quote.plans} t={t} busy={busy} onPick={(plan) => void send(plan.items, chosenContract)} />
+          )}
         </div>
-      )}
+        {/* Side column from tablet up: the price stays beside the add-ons being toggled. */}
+        <div className="flex flex-col gap-3 md:col-start-2 md:row-span-2 md:row-start-1 md:self-start md:[@media(min-height:56rem)]:sticky md:[@media(min-height:56rem)]:top-6">
+          <article
+            data-testid="quote"
+            className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-700"
+          >
+            <ul className="flex flex-col divide-y divide-neutral-100 dark:divide-neutral-800" data-testid="quote-lines">
+              {quote.lines.map((line) => (
+                <li key={line.product_id} className="flex items-baseline justify-between gap-3 py-2">
+                  <span>
+                    {line.product_name}
+                    {line.qty > 1 && (
+                      <span className="text-sm text-neutral-500">
+                        {" "}
+                        · {t.quote.qty} {line.qty}
+                      </span>
+                    )}
+                  </span>
+                  <span className="whitespace-nowrap tabular-nums">{formatPaise(line.line_total_paise)}</span>
+                </li>
+              ))}
+            </ul>
+            <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-sm">
+              <dt>{t.quote.subtotal}</dt>
+              <dd className="text-right tabular-nums">{formatPaise(totals.monthly_subtotal_paise)}</dd>
+              <dt>{fill(t.quote.gst, { rate: gstRate })}</dt>
+              <dd className="text-right tabular-nums" data-testid="gst">
+                {formatPaise(totals.monthly_gst_paise)}
+              </dd>
+              <dt className="text-base font-semibold">{t.quote.monthlyTotal}</dt>
+              <dd className="text-right text-xl font-semibold tabular-nums" data-testid="monthly-total">
+                {formatPaise(totals.monthly_total_paise)}
+                <span className="text-sm font-normal text-neutral-500">{t.quote.perMonth}</span>
+              </dd>
+              <dt>
+                {t.quote.setup} <span className="text-neutral-500">({t.quote.gstIncluded})</span>
+              </dt>
+              <dd className="text-right tabular-nums" data-testid="setup-total">
+                {formatPaise(totals.setup_total_paise)}
+              </dd>
+            </dl>
+            <ContractChoice quote={quote} t={t} busy={busy} editable={editable && !expired} onPick={(m) => void send(items, m)} />
+            {totals.savings_paise > 0 && (
+              <p className="text-sm text-green-700 dark:text-green-400" data-testid="bundle-discount">
+                {fill(t.quote.savings, { amount: formatPaise(totals.savings_paise) })}
+              </p>
+            )}
+            <PayBox quote={quote} t={t} />
+            <p className="text-xs text-neutral-500">{fill(t.quote.validUntil, { date: validUntil })}</p>
+          </article>
+          <div className="hidden md:block">{continueButton}</div>
+        </div>
+        <div className="flex flex-col gap-5 empty:hidden md:col-start-1 md:row-start-2">
+          {busy && <p className="text-sm text-neutral-500">{t.quote.updating}</p>}
+          {failed === "error" && (
+            <p role="alert" className="text-sm text-red-700">
+              {t.advisor.error}
+            </p>
+          )}
 
-      {cascade && <Cascade cascade={cascade} t={t} busy={busy} onFix={(fix) => void send(fix.items, chosenContract)} onKeep={() => setCascade(null)} />}
+          {expired && (
+            <div role="alert" className="flex flex-col gap-2 rounded-xl bg-amber-50 p-3 text-amber-900 dark:bg-amber-950 dark:text-amber-100">
+              <p>{t.quote.expired}</p>
+              <button type="button" onClick={() => void refresh()} disabled={busy} className="self-start rounded-lg bg-amber-700 px-3 py-2 text-white">
+                {t.quote.refresh}
+              </button>
+            </div>
+          )}
 
-      {editable && (
-        <section className="flex flex-col gap-2">
-          <h2 className="text-lg font-semibold">{t.quote.addons}</h2>
-          <OptionList title={t.quote.inPlan} options={inPlan} totals={totals} t={t} busy={busy} onToggle={toggle} onTry={() => {}} canRemove={inPlan.length > 1} />
-          <OptionList
-            options={others}
-            totals={totals}
-            t={t}
-            busy={busy}
-            onToggle={toggle}
-            onTry={(alt, qty) => void send([...items.filter((i) => i.product_id !== alt), { product_id: alt, qty }], chosenContract)}
-            canRemove
-          />
-        </section>
-      )}
+          {cascade && <Cascade cascade={cascade} t={t} busy={busy} onFix={(fix) => void send(fix.items, chosenContract)} onKeep={() => setCascade(null)} />}
 
-      {editable && !expired && <SharePanel quote={quote} locale={locale} t={t} />}
+          {editable && (
+            <section className="flex flex-col gap-2">
+              <h2 className="text-lg font-semibold">{t.quote.addons}</h2>
+              <OptionList title={t.quote.inPlan} options={inPlan} totals={totals} t={t} busy={busy} onToggle={toggle} onTry={() => {}} canRemove={inPlan.length > 1} />
+              <OptionList
+                options={others}
+                totals={totals}
+                t={t}
+                busy={busy}
+                onToggle={toggle}
+                onTry={(alt, qty) => void send([...items.filter((i) => i.product_id !== alt), { product_id: alt, qty }], chosenContract)}
+                canRemove
+              />
+            </section>
+          )}
 
-      <div className="sticky bottom-0 -mx-4 flex flex-col gap-1 bg-neutral-50/95 px-4 py-3 dark:bg-neutral-950/95">
-        <button
-          type="button"
-          disabled={busy || expired || !editable || cascade !== null}
-          onClick={() => router.push(`/${locale}/checkout?q=${encodeURIComponent(quote.quote_id)}`)}
-          className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50"
-        >
-          {t.quote.continue} · {formatPaise(totals.monthly_total_paise)}
-          {t.quote.perMonth}
-        </button>
+          {editable && !expired && <SharePanel quote={quote} locale={locale} t={t} />}
+        </div>
+      </div>
+
+      {/* Phones keep the action pinned to the thumb; wider layouts have it under the price. */}
+      <div className="sticky bottom-0 -mx-4 flex flex-col gap-1 bg-neutral-50/95 px-4 py-3 sm:-mx-6 sm:px-6 md:hidden dark:bg-neutral-950/95">
+        {continueButton}
       </div>
     </div>
   );
@@ -335,8 +349,8 @@ function OptionList(props: {
         {options.map((o) => {
           const delta = o.eligible ? deltaLabel(o, props.totals, t) : null;
           return (
-          <li key={o.product_id} data-testid={`option-${o.product_id}`} className="flex items-start justify-between gap-3 p-3">
-            <div className="flex min-w-0 flex-col">
+          <li key={o.product_id} data-testid={`option-${o.product_id}`} className="flex flex-wrap items-start justify-between gap-3 p-3">
+            <div className="flex min-w-0 flex-1 basis-48 flex-col">
               <span className="font-medium">
                 {o.product_name}
                 {o.recommended && !o.in_bundle && (
@@ -390,7 +404,7 @@ function OptionList(props: {
                   type="button"
                   disabled={busy}
                   onClick={() => props.onTry(o.alternative as string, o.qty)}
-                  className="shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-red-800 ring-1 ring-red-700 disabled:opacity-50 dark:text-red-200"
+                  className="max-w-full rounded-lg px-3 py-2 text-sm font-medium text-red-800 ring-1 ring-red-700 disabled:opacity-50 dark:text-red-200"
                 >
                   {fill(t.quote.fixReplace, { product: o.alternative_name })}
                 </button>
@@ -709,7 +723,7 @@ function SharePanel({
           type="button"
           disabled={busy}
           onClick={() => void make()}
-          className="h-11 rounded-xl px-3 text-sm font-medium text-red-800 ring-1 ring-red-700 disabled:opacity-50 dark:text-red-200"
+          className="min-h-11 rounded-xl py-2 px-3 text-sm font-medium text-red-800 ring-1 ring-red-700 disabled:opacity-50 dark:text-red-200"
         >
           {t.quote.share}
         </button>

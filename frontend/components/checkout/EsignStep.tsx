@@ -79,7 +79,7 @@ export function EsignStep({ order, t, onSigned }: { order: Order; t: Messages; o
           type="button"
           disabled={busy}
           onClick={() => void send()}
-          className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50"
+          className="min-h-12 rounded-xl bg-red-700 px-4 py-2 font-medium text-white disabled:opacity-50"
         >
           {closed ? t.otp.resend : t.checkout.signSend}
         </button>
@@ -104,7 +104,7 @@ export function EsignStep({ order, t, onSigned }: { order: Order; t: Messages; o
           <button
             type="submit"
             disabled={busy || code.length !== 6}
-            className="h-12 rounded-xl bg-red-700 font-medium text-white disabled:opacity-50"
+            className="min-h-12 rounded-xl bg-red-700 px-4 py-2 font-medium text-white disabled:opacity-50"
           >
             {t.checkout.signConfirm}
           </button>

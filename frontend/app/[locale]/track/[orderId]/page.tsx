@@ -16,7 +16,7 @@ export default async function TrackOrderPage({
   if (!isLocale(locale) || !ORDER_ID.test(orderId)) notFound();
   const t = messagesFor(locale);
   return (
-    <main lang={bcp47(locale)} className="mx-auto flex min-h-dvh max-w-md flex-col gap-4 px-4 py-6">
+    <main lang={bcp47(locale)} className="page-column">
       <h1 className="text-2xl font-semibold tracking-tight">{t.track.title}</h1>
       <Tracker locale={locale} t={t} orderId={orderId} />
       <Link href={`/${locale}/track`} className="self-start text-sm underline">
