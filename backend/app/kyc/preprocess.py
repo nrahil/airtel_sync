@@ -29,6 +29,9 @@ DESKEW_MIN_DEGREES: Final = 0.5
 MAX_SKEW_DEGREES: Final = 15.0
 _SKEW_WORK_WIDTH: Final = 600
 _INK_LEVEL: Final = 128
+_PAPER_PERCENTILE: Final = 75  # most of a document page is paper
+_INK_PERCENTILE: Final = 1
+_MIN_CONTRAST: Final = 40.0
 
 Gray = npt.NDArray[np.float64]
 
@@ -42,12 +45,34 @@ class Prepared:
 
 
 def remove_watermark(img: Image.Image) -> Gray:
+    """Grey image with the red watermark painted over in the paper's own colour.
+
+    Painting it white instead leaves white scars across the text on a photo, where
+    the paper is grey, and Tesseract then reads the page as noise.
+    """
     rgb = np.asarray(img.convert("RGB"), dtype=np.int16)
     r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
     gray: Gray = (0.299 * r + 0.587 * g + 0.114 * b).astype(np.float64)
     light_red = (r - np.minimum(g, b) > 35) & (r > 150)
-    gray[light_red] = 255.0
+    rest = gray[~light_red]
+    # Paper colour from what is not watermark — unless that is too little to be paper.
+    paper = float(np.percentile(rest, _PAPER_PERCENTILE)) if rest.size * 2 >= gray.size else 255.0
+    gray[light_red] = paper
     return gray
+
+
+def normalise_lighting(gray: Gray) -> Gray:
+    """Stretch so the paper is white and the darkest ink black (phone photos, dim scans).
+
+    Only a fallback for a page OCR could not recognise: on a page it can read, the
+    stretch amplifies JPEG noise and costs more field reads than it wins.
+    """
+    paper = float(np.percentile(gray, _PAPER_PERCENTILE))
+    ink = float(np.percentile(gray, _INK_PERCENTILE))
+    if paper - ink < _MIN_CONTRAST:
+        return gray  # blank or flat image: nothing to stretch
+    stretched: Gray = ((gray - ink) * (255.0 / (paper - ink))).clip(0, 255)
+    return stretched
 
 
 def blur_score(gray: Gray) -> float:

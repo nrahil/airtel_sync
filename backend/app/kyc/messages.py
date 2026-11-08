@@ -68,12 +68,23 @@ _EN: Final[dict[KycReason, str]] = {
     "us; a team member will check it.",
     KycReason.GSTIN_MANUAL_ENTRY: "Thanks — a team member will check the GSTIN you entered against "
     "your certificate.",
-    KycReason.LEGAL_NAME_MISMATCH: "The legal name on your GST certificate doesn't match the GST "
-    "registry. Please upload the original certificate; a team member will also review it.",
+    KycReason.LEGAL_NAME_MISMATCH: "The legal name on your GST certificate differs from the GST "
+    "registry. Please confirm how the legal name and trade name are related, or upload the "
+    "original certificate; a team member will review it.",
+    KycReason.UDYAM_DATE_MISMATCH: "The registration date on your Udyam certificate differs from "
+    "the Udyam registry. Please clarify the date or upload the correct certificate; a team "
+    "member will review it.",
+    KycReason.UDYAM_ACTIVITY_MISMATCH: "The business activity on your Udyam certificate differs "
+    "from the Udyam registry. Please clarify your activity or upload the correct certificate; "
+    "a team member will review it.",
     KycReason.TRADE_NAME_MISMATCH: "The trade name on your GST certificate doesn't match the GST "
     "registry. Please upload the original certificate.",
     KycReason.CONSTITUTION_MISMATCH: "The business type on your GST certificate differs from the "
     "registry; a team member will check it.",
+    KycReason.GST_ADDRESS_MISMATCH: "The address on your GST certificate differs from the GST "
+    "registry; a team member will check it.",
+    KycReason.GST_DATE_MISMATCH: "The registration date on your GST certificate differs from the "
+    "GST registry; a team member will check it.",
     KycReason.UDYAM_NUMBER_MISSING: "Your Udyam certificate has no registration number. Please "
     "upload the complete certificate.",
     KycReason.UDYAM_FORMAT_INVALID: "The Udyam number doesn't look right (e.g. "
@@ -84,6 +95,8 @@ _EN: Final[dict[KycReason, str]] = {
     "record; a team member will check it.",
     KycReason.UDYAM_NAME_MISMATCH: "The business name on your Udyam certificate differs from your "
     "GST registration; a team member will check it.",
+    KycReason.UDYAM_LOCATION_MISMATCH: "The city or state on your Udyam certificate differs from "
+    "the Udyam registry; a team member will check it.",
     KycReason.UDYAM_MANUAL_ENTRY: "Thanks — a team member will check the Udyam number you entered.",
     KycReason.SIGNATORY_ID_EXPIRED: "The signatory ID expired on {valid_till}. Please upload an "
     "ID that is still valid — or fetch your Aadhaar from DigiLocker.",
@@ -141,12 +154,22 @@ _HI: Final[dict[KycReason, str]] = {
     "सदस्य इसे जाँचेगा।",
     KycReason.GSTIN_MANUAL_ENTRY: "धन्यवाद — टीम का कोई सदस्य आपके लिखे GSTIN को आपके "
     "प्रमाणपत्र से मिलाएगा।",
-    KycReason.LEGAL_NAME_MISMATCH: "आपके GST प्रमाणपत्र पर कानूनी नाम रजिस्ट्री से मेल नहीं "
-    "खाता। कृपया मूल प्रमाणपत्र अपलोड करें; टीम का कोई सदस्य भी इसे देखेगा।",
+    KycReason.LEGAL_NAME_MISMATCH: "आपके GST प्रमाणपत्र पर कानूनी नाम GST रजिस्ट्री से अलग है। "
+    "कृपया बताएँ कि कानूनी नाम और व्यापार का नाम कैसे जुड़े हैं, या मूल प्रमाणपत्र अपलोड करें; "
+    "टीम का कोई सदस्य इसे देखेगा।",
+    KycReason.UDYAM_DATE_MISMATCH: "आपके उद्यम प्रमाणपत्र पर रजिस्ट्रेशन की तारीख उद्यम रजिस्ट्री "
+    "से अलग है। कृपया तारीख स्पष्ट करें या सही प्रमाणपत्र अपलोड करें; टीम का कोई सदस्य इसे देखेगा।",
+    KycReason.UDYAM_ACTIVITY_MISMATCH: "आपके उद्यम प्रमाणपत्र पर बिज़नेस की गतिविधि उद्यम "
+    "रजिस्ट्री से अलग है। कृपया गतिविधि स्पष्ट करें या सही प्रमाणपत्र अपलोड करें; टीम का कोई "
+    "सदस्य इसे देखेगा।",
     KycReason.TRADE_NAME_MISMATCH: "आपके GST प्रमाणपत्र पर व्यापार का नाम रजिस्ट्री से मेल नहीं "
     "खाता। कृपया मूल प्रमाणपत्र अपलोड करें।",
     KycReason.CONSTITUTION_MISMATCH: "आपके GST प्रमाणपत्र पर बिज़नेस का प्रकार रजिस्ट्री से अलग "
     "है; टीम का कोई सदस्य इसे जाँचेगा।",
+    KycReason.GST_ADDRESS_MISMATCH: "आपके GST प्रमाणपत्र पर लिखा पता GST रजिस्ट्री से अलग है; "
+    "टीम का कोई सदस्य इसे जाँचेगा।",
+    KycReason.GST_DATE_MISMATCH: "आपके GST प्रमाणपत्र पर रजिस्ट्रेशन की तारीख GST रजिस्ट्री से "
+    "अलग है; टीम का कोई सदस्य इसे जाँचेगा।",
     KycReason.UDYAM_NUMBER_MISSING: "आपके उद्यम प्रमाणपत्र पर रजिस्ट्रेशन नंबर नहीं है। कृपया "
     "पूरा प्रमाणपत्र अपलोड करें।",
     KycReason.UDYAM_FORMAT_INVALID: "उद्यम नंबर सही नहीं लगता (जैसे UDYAM-MH-00-1234567)। "
@@ -156,6 +179,8 @@ _HI: Final[dict[KycReason, str]] = {
     "कोई सदस्य इसे जाँचेगा।",
     KycReason.UDYAM_NAME_MISMATCH: "आपके उद्यम प्रमाणपत्र पर बिज़नेस का नाम आपके GST "
     "रजिस्ट्रेशन से अलग है; टीम का कोई सदस्य इसे जाँचेगा।",
+    KycReason.UDYAM_LOCATION_MISMATCH: "आपके उद्यम प्रमाणपत्र पर शहर या राज्य उद्यम रजिस्ट्री से "
+    "अलग है; टीम का कोई सदस्य इसे जाँचेगा।",
     KycReason.UDYAM_MANUAL_ENTRY: "धन्यवाद — टीम का कोई सदस्य आपका लिखा उद्यम नंबर जाँचेगा।",
     KycReason.SIGNATORY_ID_EXPIRED: "हस्ताक्षर करने वाले का पहचान पत्र {valid_till} को खत्म हो "
     "गया। कृपया ऐसा पहचान पत्र अपलोड करें जो अभी चालू हो — या अपना आधार DigiLocker से लें।",

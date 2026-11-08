@@ -282,8 +282,7 @@
     "updates": "Updates sent to you",
     "noContact": "We couldn't message you, so updates appear here.",
     "refresh": "Refresh",
-    "demo": "Demo: move the installation forward",
-    "demoNote": "Demo only — operations do this in real life.",
+    "demo": "Demo: see the late-order path",
     "viewOrder": "View",
     "states": {
       "QUOTE_ACCEPTED": "Order received",

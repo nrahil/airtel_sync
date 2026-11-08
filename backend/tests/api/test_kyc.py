@@ -265,11 +265,11 @@ def test_k03_clean_specimen_passes_end_to_end(
 ) -> None:
     caplog.set_level(logging.DEBUG)
     headers = login(ocr_client)
-    app_id = create(ocr_client, headers, "K03")
-    upload_specimen(ocr_client, headers, app_id, "K03")
+    app_id = create(ocr_client, headers, "C01")
+    upload_specimen(ocr_client, headers, app_id, "C01")
     body = submit(ocr_client, headers, app_id)
     assert body["status"] == "PASS", body["verdict"]
-    ctx = GOLDEN["specimens"]["K03"]["context"]
+    ctx = GOLDEN["specimens"]["C01"]["context"]
     exposed = str(body) + caplog.text
     for secret in ctx.values():
         assert secret not in exposed
@@ -281,7 +281,7 @@ def test_k11_stale_bill_message_end_to_end(ocr_client: TestClient) -> None:
     app_id = create(ocr_client, headers, "K11")
     upload_specimen(ocr_client, headers, app_id, "K11")
     body = submit(ocr_client, headers, app_id)
-    assert body["status"] == "FAIL"
+    assert body["status"] == "REVIEW"
     fix = next(f for f in body["verdict"]["fixes"] if f["reason"] == "ADDRESS_PROOF_STALE")
     assert fix["message"].endswith("Please upload a bill dated on or after 16 Apr 2026.")
 
@@ -292,7 +292,7 @@ def test_k05_missing_udyam_verified_by_lookup(ocr_client: TestClient) -> None:
     app_id = create(ocr_client, headers, "K05")
     upload_specimen(ocr_client, headers, app_id, "K05")
     body = submit(ocr_client, headers, app_id)
-    assert body["status"] == "ACTION_NEEDED"
+    assert body["status"] == "REVIEW"
     assert body["verdict"]["lookup_offered"]
     assert ocr_client.post(f"{BASE}/{app_id}/udyam/lookup", headers=headers).status_code == 200
     body = submit(ocr_client, headers, app_id)
@@ -306,7 +306,7 @@ def test_k04_blurry_then_manual_entry_goes_to_human_review(ocr_client: TestClien
     headers = login(ocr_client)
     app_id = create(ocr_client, headers, "K04")
     upload_specimen(ocr_client, headers, app_id, "K04")
-    assert submit(ocr_client, headers, app_id)["status"] == "ACTION_NEEDED"
+    assert submit(ocr_client, headers, app_id)["status"] == "REVIEW"
     r = ocr_client.post(
         f"{BASE}/{app_id}/documents/GST_CERTIFICATE/manual",
         json={"value": "27PZSXS1936O1ZH"},
@@ -317,7 +317,7 @@ def test_k04_blurry_then_manual_entry_goes_to_human_review(ocr_client: TestClien
     assert body["status"] == "REVIEW", body["verdict"]
     with ocr_client.app.state.sessionmaker() as db:  # type: ignore[attr-defined]
         items = db.scalars(select(KycReviewItem).where(KycReviewItem.status == ReviewStatus.OPEN))
-        assert [i.reasons for i in items] == [["GSTIN_MANUAL_ENTRY"]]
+        assert [i.reasons for i in items] == [["GSTIN_MANUAL_ENTRY", "UDYAM_DATE_MISMATCH"]]
 
 
 # ------------------------------------------------------------------ fewer uploads, visit
@@ -327,8 +327,8 @@ def test_k04_blurry_then_manual_entry_goes_to_human_review(ocr_client: TestClien
 def test_gstin_verified_online_instead_of_a_certificate_photo(ocr_client: TestClient) -> None:
     """The registry record stands in for the certificate; ID and bill are still checked."""
     headers = login(ocr_client)
-    app_id = create(ocr_client, headers, "K03")
-    upload_specimen(ocr_client, headers, app_id, "K03", skip=(DocSlot.GST_CERTIFICATE,))
+    app_id = create(ocr_client, headers, "C01")
+    upload_specimen(ocr_client, headers, app_id, "C01", skip=(DocSlot.GST_CERTIFICATE,))
     r = ocr_client.post(f"{BASE}/{app_id}/gst/lookup", headers=headers)
     assert r.status_code == 200, r.text
     assert r.json()["on_record"] == {"gstin": True, "udyam": True}

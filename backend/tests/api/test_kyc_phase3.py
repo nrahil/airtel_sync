@@ -39,7 +39,7 @@ def test_fastest_path_gstin_online_digilocker_and_one_photo_passes(
     ocr_client: TestClient,
 ) -> None:
     headers = login(ocr_client)
-    app_id = create(ocr_client, headers, "K03")
+    app_id = create(ocr_client, headers, "C01")
     assert ocr_client.post(f"{BASE}/{app_id}/gst/lookup", headers=headers).status_code == 200
     r = digilocker(ocr_client, headers, app_id, "SIGNATORY_ID")
     assert r.status_code == 200, r.text
@@ -52,7 +52,7 @@ def test_fastest_path_gstin_online_digilocker_and_one_photo_passes(
         "UDYAM_CERTIFICATE": "DIGILOCKER",
     }
     # The only photo: the electricity bill.
-    bill = specimen_path("K03", DocSlot.ADDRESS_PROOF).read_bytes()
+    bill = specimen_path("C01", DocSlot.ADDRESS_PROOF).read_bytes()
     upload(ocr_client, headers, app_id, DocSlot.ADDRESS_PROOF, bill)
     body = submit(ocr_client, headers, app_id)
     assert body["status"] == "PASS", body["verdict"]
@@ -63,7 +63,7 @@ def test_fastest_path_gstin_online_digilocker_and_one_photo_passes(
     assert "signatory.valid_till" not in checks  # an Aadhaar has no expiry to read
     assert audit_actions(ocr_client, app_id).count("KYC_DIGILOCKER_FETCHED") == 2
     # Nothing on record leaks into the verdict.
-    for secret in GOLDEN["specimens"]["K03"]["context"].values():
+    for secret in GOLDEN["specimens"]["C01"]["context"].values():
         assert secret not in str(body)
 
 
@@ -81,7 +81,7 @@ def test_digilocker_without_the_document_says_not_linked(ocr_client: TestClient)
 
 def test_saying_no_on_digilocker_fetches_nothing_and_is_audited(ocr_client: TestClient) -> None:
     headers = login(ocr_client)
-    app_id = create(ocr_client, headers, "K03")
+    app_id = create(ocr_client, headers, "C01")
     r = digilocker(ocr_client, headers, app_id, "SIGNATORY_ID", allow=False)
     assert r.status_code == 409
     assert r.json()["detail"]["code"] == "DIGILOCKER_DECLINED"
@@ -91,7 +91,7 @@ def test_saying_no_on_digilocker_fetches_nothing_and_is_audited(ocr_client: Test
 
 def test_digilocker_only_for_id_and_udyam_and_only_the_owner(ocr_client: TestClient) -> None:
     headers = login(ocr_client)
-    app_id = create(ocr_client, headers, "K03")
+    app_id = create(ocr_client, headers, "C01")
     for slot in ("ADDRESS_PROOF", "GST_CERTIFICATE"):
         r = digilocker(ocr_client, headers, app_id, slot)
         assert r.json()["detail"]["code"] == "SLOT_NOT_SUPPORTED"
@@ -105,7 +105,7 @@ def test_digilocker_only_for_id_and_udyam_and_only_the_owner(ocr_client: TestCli
 
 def test_fetching_again_replaces_the_previous_document(ocr_client: TestClient) -> None:
     headers = login(ocr_client)
-    app_id = create(ocr_client, headers, "K03")
+    app_id = create(ocr_client, headers, "C01")
     digilocker(ocr_client, headers, app_id, "SIGNATORY_ID")
     r = digilocker(ocr_client, headers, app_id, "SIGNATORY_ID")
     assert [d["slot"] for d in r.json()["documents"]] == ["SIGNATORY_ID"]
@@ -124,11 +124,11 @@ def slots_of(body: dict[str, Any]) -> dict[str, str]:
 
 def test_wrong_gstin_can_be_fixed_and_stale_checks_are_dropped(ocr_client: TestClient) -> None:
     headers = login(ocr_client)
-    app_id = create(ocr_client, headers, "K03")
+    app_id = create(ocr_client, headers, "C01")
     ocr_client.post(f"{BASE}/{app_id}/gst/lookup", headers=headers)
     digilocker(ocr_client, headers, app_id, "SIGNATORY_ID")
     digilocker(ocr_client, headers, app_id, "UDYAM_CERTIFICATE")
-    bill = specimen_path("K03", DocSlot.ADDRESS_PROOF).read_bytes()
+    bill = specimen_path("C01", DocSlot.ADDRESS_PROOF).read_bytes()
     upload(ocr_client, headers, app_id, DocSlot.ADDRESS_PROOF, bill)
     got = ocr_client.get(f"{BASE}/{app_id}", headers=headers).json()
     assert got["on_record_masked"]["gstin"] == "27XUIX******1ZP"
@@ -160,7 +160,7 @@ def test_changing_the_name_or_removing_udyam_drops_what_digilocker_gave(
     ocr_client: TestClient,
 ) -> None:
     headers = login(ocr_client)
-    app_id = create(ocr_client, headers, "K03")
+    app_id = create(ocr_client, headers, "C01")
     digilocker(ocr_client, headers, app_id, "SIGNATORY_ID")
     digilocker(ocr_client, headers, app_id, "UDYAM_CERTIFICATE")
     body = edit_details(ocr_client, headers, app_id, contact_name="Joseph R Singh").json()
@@ -177,11 +177,11 @@ def test_changing_the_name_or_removing_udyam_drops_what_digilocker_gave(
 @requires_tesseract
 def test_a_verified_application_is_locked(ocr_client: TestClient) -> None:
     headers = login(ocr_client)
-    app_id = create(ocr_client, headers, "K03")
+    app_id = create(ocr_client, headers, "C01")
     ocr_client.post(f"{BASE}/{app_id}/gst/lookup", headers=headers)
     digilocker(ocr_client, headers, app_id, "SIGNATORY_ID")
     digilocker(ocr_client, headers, app_id, "UDYAM_CERTIFICATE")
-    bill = specimen_path("K03", DocSlot.ADDRESS_PROOF).read_bytes()
+    bill = specimen_path("C01", DocSlot.ADDRESS_PROOF).read_bytes()
     upload(ocr_client, headers, app_id, DocSlot.ADDRESS_PROOF, bill)
     assert submit(ocr_client, headers, app_id)["status"] == "PASS"
     r = edit_details(ocr_client, headers, app_id, gstin="27AAPFU0939F1ZV")
@@ -192,5 +192,5 @@ def test_a_verified_application_is_locked(ocr_client: TestClient) -> None:
 
 def test_only_the_owner_can_edit(ocr_client: TestClient) -> None:
     headers = login(ocr_client)
-    app_id = create(ocr_client, headers, "K03")
+    app_id = create(ocr_client, headers, "C01")
     assert edit_details(ocr_client, login(ocr_client), app_id, gstin="X").status_code == 404

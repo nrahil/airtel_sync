@@ -12,6 +12,8 @@ test("English landing: value line, Start, Track and all 10 languages", async ({ 
   await expect(page.getByTestId("start")).toHaveAttribute("href", "/en/advisor");
   await expect(page.getByTestId("track")).toHaveText("Already ordered? Track it");
   await expect(page.getByTestId("track")).toHaveAttribute("href", "/en/track");
+  await expect(page.getByTestId("staff-sign-in")).toHaveText("Staff sign-in");
+  await expect(page.getByTestId("staff-sign-in")).toHaveAttribute("href", "/en/backoffice");
   const nav = page.getByRole("navigation", { name: "Language" });
   await expect(nav.getByRole("link")).toHaveCount(10);
   await expect(nav.getByRole("link", { name: "English" })).toHaveAttribute("aria-current", "page");

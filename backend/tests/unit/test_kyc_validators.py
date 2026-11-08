@@ -14,6 +14,7 @@ from app.kyc.validators import (
     IdStatus,
     address_proof_cutoff,
     address_similarity,
+    addresses_match,
     business_names_match,
     clean_identifier,
     is_address_proof_fresh,
@@ -124,8 +125,8 @@ def test_repair_only_touches_class_violations() -> None:
     res = resolve_gstin("27XUIXGO767D1ZP", known)  # O in a digit slot
     assert res.status is IdStatus.CORRECTED
     assert res.value == "27XUIXG0767D1ZP"
-    # 'Q' is not a confusable of '0': no repair.
-    assert not resolve_gstin("27XUIXGQ767D1ZP", known).accepted
+    # 'Y' looks like no digit: no repair.
+    assert not resolve_gstin("27XUIXGY767D1ZP", known).accepted
 
 
 @given(st.sampled_from(["O", "I", "S", "B", "Z"]), st.integers(min_value=0, max_value=1))
@@ -247,3 +248,88 @@ def test_address_similarity() -> None:
     assert address_similarity(a, a.replace("411231", "110001")) >= 0.6  # pincode ignored-ish
     assert address_similarity(a, "Shop/Unit 21, Sector 14, Mumbai, Maharashtra - 570043") < 0.6
     assert address_similarity("", a) == 0.0
+
+
+# ------------------------------------------------------------------ unseen-document misreads
+# Each read below came from scripts/kyc_stress.py: fresh certificates, real Tesseract.
+
+
+def test_lookalike_letter_misread_is_repaired_only_with_checksum_and_registry() -> None:
+    known = registry_of("08CJCXH5108B1ZC")
+    res = resolve_gstin("08CICXH5108B1ZC", known)  # DejaVu Mono 'J' read as 'I'
+    assert res.status is IdStatus.CORRECTED
+    assert res.value == "08CJCXH5108B1ZC"
+    assert [(c.position, c.read, c.corrected) for c in res.corrections] == [(3, "I", "J")]
+    assert not resolve_gstin("08CICXH5108B1ZC", never).accepted
+
+
+@pytest.mark.parametrize(
+    ("read", "truth"),
+    [
+        ("27Q3LXS916601Z5", "27QJLXS9166O1Z5"),  # J→3 and O→0 together
+        ("29TWXXAG702Q1Z2", "29TWXXA0702Q1Z2"),  # 0→G in a digit slot
+        ("Q8CJCXH5108B1ZC", "08CJCXH5108B1ZC"),  # 0→Q
+        ("27XRVXSG6133J1ZX", "27XRVXS6133J1ZX"),  # one stray glyph added
+    ],
+)
+def test_photo_misreads_resolve_to_the_registered_gstin(read: str, truth: str) -> None:
+    res = resolve_gstin(read, registry_of(truth))
+    assert res.status is IdStatus.CORRECTED
+    assert res.value == truth
+    assert res.corrections
+
+
+def test_digit_read_as_another_digit_is_never_repaired() -> None:
+    """'0' read as '8' is indistinguishable from an altered digit (K06): report it."""
+    res = resolve_gstin("88CJCXH5108B1ZC", registry_of("08CJCXH5108B1ZC"))
+    assert res.status is IdStatus.INVALID_CHECKSUM
+
+
+def test_two_registered_repairs_are_refused() -> None:
+    """'H' could be 'N' or 'M': both numbers registered, so neither is guessed."""
+    read = "UDYAM-TH-00-8789510"
+    assert resolve_udyam(read, registry_of("UDYAM-TN-00-8789510")).value == "UDYAM-TN-00-8789510"
+    res = resolve_udyam(read, registry_of("UDYAM-TN-00-8789510", "UDYAM-TM-00-8789510"))
+    assert res.value == read
+    assert res.status is not IdStatus.CORRECTED
+
+
+@pytest.mark.parametrize(
+    ("read", "truth"),
+    [
+        ("UDYAK-TW-00-8789510", "UDYAM-TN-00-8789510"),
+        ("UDYAH-GJ-00-2265011", "UDYAM-GJ-00-2265011"),
+        ("UDYAM-MH-908-2271795", "UDYAM-MH-00-2271795"),
+        ("UDYAM-DL-0-0649289", "UDYAM-DL-00-0649289"),
+        ("UDYAM-AP-80-9732272", "UDYAM-AP-00-9732272"),
+    ],
+)
+def test_udyam_photo_misreads_resolve_to_the_registered_number(read: str, truth: str) -> None:
+    res = resolve_udyam(read, registry_of(truth))
+    assert res.status is IdStatus.CORRECTED
+    assert res.value == truth
+
+
+def test_udyam_serial_digit_is_never_swapped() -> None:
+    res = resolve_udyam("UDYAM-MH-00-2271796", registry_of("UDYAM-MH-00-2271795"))
+    assert res.status is IdStatus.VALID  # well-formed, but not that enterprise
+    assert res.value == "UDYAM-MH-00-2271796"
+
+
+def test_names_match_through_lookalike_glyphs() -> None:
+    assert names_match("Lakshmi lyer", "Lakshmi Iyer")  # capital I read as small l
+    assert names_match("Rarn Kumar", "Ram Kumar")
+    assert not names_match("Lakshmi Iyer", "Lakshmi Iyengar")
+
+
+def test_addresses_must_share_every_number() -> None:
+    registered = "Shop/Unit 80, Civil Lines, Nagpur, Maharashtra - 411231"
+    assert addresses_match(
+        "Shop/Unit 80, Civil Lines, Nagpur, Maharashtra- 411231", registered, 0.6
+    )[0]
+    assert not addresses_match(
+        "Shop/Unit 81, Civil Lines, Nagpur, Maharashtra - 411231", registered, 0.6
+    )[0]
+    assert not addresses_match(
+        "Shop/Unit 80, Civil Lines, Nagpur, Maharashtra - 411239", registered, 0.6
+    )[0]

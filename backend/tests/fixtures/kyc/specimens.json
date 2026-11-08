@@ -1,81 +1,230 @@
 {
-  "_comment": "Golden expectations for the provided KYC specimens K01-K12 (IMPLEMENTATION_PLAN §4.5 / Appendix A.5). 'context' is what the lead on record says (smb_leads.csv, matched by GSTIN). 'decision' lists acceptable overall decisions; 'required' reason codes must all appear; 'forbidden' must not. K02 differs from the plan's derived key: its certificate prints the letter O (verified at 4x zoom), and after deskewing our OCR reads it correctly, so no GSTIN_OCR_CORRECTED is disclosed. K08 is where OCR reads 0 for O and the repair is disclosed.",
+  "_comment": "Expected decisions for the provided KYC specimens K01-K12 (the team's Smart KYC decision table): only a GST registration the registry marks cancelled or suspended is rejected (FAIL); anything unclear or correctable is manual review (REVIEW). K02's certificate prints the registry GSTIN exactly (letter O, 4115; verified at 4x zoom). K06's prints S8189 against the registry's S5189, a real altered digit, reported as GSTIN_CHECKSUM_INVALID. K08 is where OCR reads 0 for O and the repair is disclosed. C01 is K03 with a Udyam certificate that matches the registry (date and activity): the clean applicant that must be verified.",
   "today": "2026-07-15",
   "specimens": {
     "K01": {
-      "context": {"contact_name": "Neha Kaur", "gstin_on_record": "37IHKXV5167L1ZS", "udyam_on_record": null},
-      "decision": ["FAIL"],
-      "required": ["GSTIN_CANCELLED", "UDYAM_NUMBER_MISSING"],
-      "forbidden": []
+      "context": {
+        "contact_name": "Neha Kaur",
+        "gstin_on_record": "37IHKXV5167L1ZS",
+        "udyam_on_record": null
+      },
+      "decision": [
+        "FAIL"
+      ],
+      "required": [
+        "GSTIN_CANCELLED",
+        "UDYAM_NUMBER_MISSING"
+      ],
+      "forbidden": [],
+      "review_required": false
     },
     "K02": {
-      "context": {"contact_name": "Joseph Shah", "gstin_on_record": "19EOGXH4115Y1ZL", "udyam_on_record": "UDYAM-WB-00-5053330"},
-      "decision": ["PASS"],
-      "required": ["DESKEWED"],
-      "forbidden": ["GSTIN_CHECKSUM_INVALID"]
+      "context": {
+        "contact_name": "Joseph Shah",
+        "gstin_on_record": "19EOGXH4115Y1ZL",
+        "udyam_on_record": "UDYAM-WB-00-5053330"
+      },
+      "decision": [
+        "REVIEW"
+      ],
+      "required": [
+        "UDYAM_DATE_MISMATCH",
+        "DESKEWED"
+      ],
+      "forbidden": [
+        "GSTIN_CHECKSUM_INVALID",
+        "UDYAM_ACTIVITY_MISMATCH"
+      ],
+      "review_required": true
     },
     "K03": {
-      "context": {"contact_name": "Joseph Singh", "gstin_on_record": "27XUIXG0767D1ZP", "udyam_on_record": "UDYAM-MH-00-9516696"},
-      "decision": ["PASS"],
-      "required": [],
-      "forbidden": []
+      "context": {
+        "contact_name": "Joseph Singh",
+        "gstin_on_record": "27XUIXG0767D1ZP",
+        "udyam_on_record": "UDYAM-MH-00-9516696"
+      },
+      "decision": [
+        "REVIEW"
+      ],
+      "required": [
+        "UDYAM_DATE_MISMATCH"
+      ],
+      "forbidden": [
+        "UDYAM_ACTIVITY_MISMATCH"
+      ],
+      "review_required": true
     },
     "K04": {
-      "context": {"contact_name": "Fatima Pillai", "gstin_on_record": "27PZSXS1936O1ZH", "udyam_on_record": "UDYAM-MH-00-6131836"},
-      "decision": ["ACTION_NEEDED"],
-      "required": ["IMAGE_TOO_BLURRY"],
-      "forbidden": []
+      "context": {
+        "contact_name": "Fatima Pillai",
+        "gstin_on_record": "27PZSXS1936O1ZH",
+        "udyam_on_record": "UDYAM-MH-00-6131836"
+      },
+      "decision": [
+        "REVIEW"
+      ],
+      "required": [
+        "IMAGE_TOO_BLURRY",
+        "UDYAM_DATE_MISMATCH"
+      ],
+      "forbidden": [
+        "GSTIN_CHECKSUM_INVALID",
+        "GSTIN_FORMAT_INVALID",
+        "GSTIN_NOT_FOUND"
+      ],
+      "review_required": true
     },
     "K05": {
-      "context": {"contact_name": "Anita Shah", "gstin_on_record": "32TZAXB5481U1Z1", "udyam_on_record": "UDYAM-KL-00-5521886"},
-      "decision": ["ACTION_NEEDED"],
-      "required": ["DOCUMENT_MISSING:UDYAM"],
+      "context": {
+        "contact_name": "Anita Shah",
+        "gstin_on_record": "32TZAXB5481U1Z1",
+        "udyam_on_record": "UDYAM-KL-00-5521886"
+      },
+      "decision": [
+        "REVIEW"
+      ],
+      "required": [
+        "DOCUMENT_MISSING:UDYAM"
+      ],
       "forbidden": [],
-      "lookup_offered": true
+      "lookup_offered": true,
+      "review_required": true
     },
     "K06": {
-      "context": {"contact_name": "Pooja Shah", "gstin_on_record": "08YKZXS5189L1ZO", "udyam_on_record": "UDYAM-RJ-00-6577157"},
-      "decision": ["FAIL"],
-      "required": ["GSTIN_CHECKSUM_INVALID"],
-      "forbidden": ["GSTIN_OCR_CORRECTED"]
+      "context": {
+        "contact_name": "Pooja Shah",
+        "gstin_on_record": "08YKZXS5189L1ZO",
+        "udyam_on_record": "UDYAM-RJ-00-6577157"
+      },
+      "decision": [
+        "REVIEW"
+      ],
+      "required": [
+        "GSTIN_CHECKSUM_INVALID",
+        "UDYAM_DATE_MISMATCH",
+        "UDYAM_ACTIVITY_MISMATCH"
+      ],
+      "forbidden": [
+        "GSTIN_OCR_CORRECTED"
+      ],
+      "review_required": true
     },
     "K07": {
-      "context": {"contact_name": "Neha Banerjee", "gstin_on_record": "07CPCXN0398P1ZT", "udyam_on_record": "UDYAM-DL-00-9565547"},
-      "decision": ["FAIL", "REVIEW"],
-      "required": ["LEGAL_NAME_MISMATCH"],
+      "context": {
+        "contact_name": "Neha Banerjee",
+        "gstin_on_record": "07CPCXN0398P1ZT",
+        "udyam_on_record": "UDYAM-DL-00-9565547"
+      },
+      "decision": [
+        "REVIEW"
+      ],
+      "required": [
+        "LEGAL_NAME_MISMATCH",
+        "UDYAM_DATE_MISMATCH"
+      ],
       "forbidden": [],
       "review_required": true
     },
     "K08": {
-      "context": {"contact_name": "Joseph Rao", "gstin_on_record": "24XORXG9365M1Z3", "udyam_on_record": "UDYAM-GJ-00-8477445"},
-      "decision": ["PASS"],
-      "required": ["GSTIN_OCR_CORRECTED"],
-      "forbidden": []
+      "context": {
+        "contact_name": "Joseph Rao",
+        "gstin_on_record": "24XORXG9365M1Z3",
+        "udyam_on_record": "UDYAM-GJ-00-8477445"
+      },
+      "decision": [
+        "REVIEW"
+      ],
+      "required": [
+        "GSTIN_OCR_CORRECTED",
+        "UDYAM_DATE_MISMATCH"
+      ],
+      "forbidden": [
+        "UDYAM_ACTIVITY_MISMATCH"
+      ],
+      "review_required": true
     },
     "K09": {
-      "context": {"contact_name": "Anita Kulkarni", "gstin_on_record": "37LDYXK0296F1ZB", "udyam_on_record": "UDYAM-AP-00-9751562"},
-      "decision": ["PASS"],
-      "required": [],
-      "forbidden": []
+      "context": {
+        "contact_name": "Anita Kulkarni",
+        "gstin_on_record": "37LDYXK0296F1ZB",
+        "udyam_on_record": "UDYAM-AP-00-9751562"
+      },
+      "decision": [
+        "REVIEW"
+      ],
+      "required": [
+        "UDYAM_DATE_MISMATCH"
+      ],
+      "forbidden": [
+        "UDYAM_ACTIVITY_MISMATCH"
+      ],
+      "review_required": true
     },
     "K10": {
-      "context": {"contact_name": "Fatima Menon", "gstin_on_record": "27QHJXK0658U1ZL", "udyam_on_record": "UDYAM-MH-00-7183141"},
-      "decision": ["REVIEW"],
-      "required": ["SIGNATORY_NOT_AUTHORISED"],
+      "context": {
+        "contact_name": "Fatima Menon",
+        "gstin_on_record": "27QHJXK0658U1ZL",
+        "udyam_on_record": "UDYAM-MH-00-7183141"
+      },
+      "decision": [
+        "REVIEW"
+      ],
+      "required": [
+        "SIGNATORY_NOT_AUTHORISED",
+        "UDYAM_DATE_MISMATCH",
+        "UDYAM_ACTIVITY_MISMATCH"
+      ],
       "forbidden": [],
       "review_required": true
     },
     "K11": {
-      "context": {"contact_name": "Vikram Pillai", "gstin_on_record": "03KGZXT1320R1ZZ", "udyam_on_record": "UDYAM-PB-00-9719478"},
-      "decision": ["FAIL"],
-      "required": ["ADDRESS_PROOF_STALE"],
-      "forbidden": []
+      "context": {
+        "contact_name": "Vikram Pillai",
+        "gstin_on_record": "03KGZXT1320R1ZZ",
+        "udyam_on_record": "UDYAM-PB-00-9719478"
+      },
+      "decision": [
+        "REVIEW"
+      ],
+      "required": [
+        "ADDRESS_PROOF_STALE",
+        "UDYAM_DATE_MISMATCH",
+        "UDYAM_ACTIVITY_MISMATCH"
+      ],
+      "forbidden": [],
+      "review_required": true
     },
     "K12": {
-      "context": {"contact_name": "Pooja Agarwal", "gstin_on_record": "37NBLXS1145E1ZU", "udyam_on_record": "UDYAM-AP-00-5186772"},
-      "decision": ["PASS"],
+      "context": {
+        "contact_name": "Pooja Agarwal",
+        "gstin_on_record": "37NBLXS1145E1ZU",
+        "udyam_on_record": "UDYAM-AP-00-5186772"
+      },
+      "decision": [
+        "REVIEW"
+      ],
+      "required": [
+        "UDYAM_DATE_MISMATCH",
+        "UDYAM_ACTIVITY_MISMATCH"
+      ],
+      "forbidden": [],
+      "review_required": true
+    },
+    "C01": {
+      "context": {
+        "contact_name": "Joseph Singh",
+        "gstin_on_record": "27XUIXG0767D1ZP",
+        "udyam_on_record": "UDYAM-MH-00-9516696"
+      },
+      "decision": [
+        "PASS"
+      ],
       "required": [],
-      "forbidden": []
+      "forbidden": [
+        "UDYAM_DATE_MISMATCH",
+        "UDYAM_ACTIVITY_MISMATCH"
+      ],
+      "review_required": false
     }
   }
 }

@@ -2,7 +2,7 @@
 
 import { API_BASE, ApiError } from "@/lib/api";
 
-export type Role = "sales" | "partner" | "kyc_reviewer" | "admin";
+export type Role = "sales" | "partner" | "kyc_reviewer" | "ops" | "admin";
 
 export interface StaffMe {
   staff_id: string;
@@ -113,6 +113,20 @@ export interface SlaRow {
   products: string[];
 }
 
+/** A paid order on the staff board, with the steps the server allows next. */
+export interface BoardOrder {
+  order_id: string;
+  state: string;
+  age_days: number;
+  sla_due: string;
+  late: boolean;
+  eta: string | null;
+  products: string[];
+  visit: { date: string; window: string } | null;
+  callback_requested_at: string | null;
+  next_steps: string[];
+}
+
 export interface ModelView {
   available: boolean;
   version?: string;
@@ -216,6 +230,7 @@ export const bo = {
       `/review/${itemId}`,
       { approve, note },
     ),
+  orders: () => call<{ orders: BoardOrder[] }>("GET", "/orders"),
   sla: () => call<{ orders: SlaRow[] }>("GET", "/sla-breaches"),
   fulfil: (orderId: string, state: string) =>
     call<{ order_id: string; state: string }>("POST", `/orders/${encodeURIComponent(orderId)}/fulfilment`, { state }),

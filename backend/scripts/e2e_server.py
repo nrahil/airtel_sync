@@ -11,7 +11,7 @@ Every start wipes ``--state-dir`` (default ``data/e2e-live``) and runs with:
 * Groq **unreachable** unless ``--groq`` is given (base URL on a closed local port), so the
   advisor runs its guided-form fallback deterministically (E2E-05);
 * raised rate limits (one browser drives many journeys) and the demo staff users
-  ``sales`` / ``partner`` / ``reviewer`` / ``admin`` with ``BACKOFFICE_DEMO_PASSWORD``
+  ``sales`` / ``partner`` / ``reviewer`` / ``ops`` / ``admin`` with ``BACKOFFICE_DEMO_PASSWORD``
   (default ``demo-password-2026``).
 """
 

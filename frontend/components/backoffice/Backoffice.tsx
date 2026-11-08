@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ApiError } from "@/lib/api";
 import {
+  type BoardOrder,
   CALL_OUTCOMES,
   type CallOutcome,
   type Factor,
@@ -27,13 +28,14 @@ import { formatPaise } from "@/lib/format";
 import { type Locale, fill } from "@/lib/i18n";
 
 type T = BackofficeMessages;
-type Tab = "leads" | "sessions" | "review" | "sla" | "model";
+type Tab = "leads" | "sessions" | "review" | "orders" | "sla" | "model";
 
 /** Which tab each permission unlocks (the server enforces the same rules). */
 const TAB_PERMISSION: Record<Tab, string[]> = {
   leads: ["leads:read"],
   sessions: ["leads:read"],
   review: ["review:read", "handoff:read"],
+  orders: ["orders:read"],
   sla: ["sla:read"],
   model: ["model:read"],
 };
@@ -111,6 +113,7 @@ export function Backoffice({ locale, t }: { locale: Locale; t: T }) {
       {tab === "leads" && <Leads t={t} me={me} lang={lang} />}
       {tab === "sessions" && <Sessions t={t} me={me} lang={lang} />}
       {tab === "review" && <Review t={t} />}
+      {tab === "orders" && <Orders t={t} />}
       {tab === "sla" && <Sla t={t} me={me} />}
       {tab === "model" && <Model t={t} />}
     </div>
@@ -684,6 +687,107 @@ function ReviewCard({ item, t, onDone }: { item: ReviewItem; t: T; onDone: () =>
         )}
       </div>
       {message && <p className="text-sm" role="status">{message}</p>}
+    </li>
+  );
+}
+
+const BOARD_REFRESH_MS = 15_000;
+
+/** Paid orders being installed: staff post each step and the owner's tracker follows. */
+function Orders({ t }: { t: T }) {
+  const fetcher = useCallback(() => bo.orders(), []);
+  const { data, problem, reload } = useLoad(fetcher, t);
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") void reload();
+    }, BOARD_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [reload]);
+  if (!data) return <Status problem={problem} t={t} />;
+  return (
+    <section className="flex flex-col gap-3" data-testid="orders">
+      <p className="text-sm text-neutral-600 dark:text-neutral-300">{t.orders.hint}</p>
+      {data.orders.length === 0 && <p>{t.empty}</p>}
+      <ul className="flex flex-col gap-3">
+        {data.orders.map((o) => (
+          <OrderCard key={o.order_id} o={o} t={t} onChange={() => void reload()} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function OrderCard({ o, t, onChange }: { o: BoardOrder; t: T; onChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const label = (s: string) => t.orders.states[s] ?? s;
+  const post = async (step: string) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await bo.fulfil(o.order_id, step);
+      setMessage(fill(t.orders.saved, { state: label(step) }));
+    } catch (e) {
+      setMessage(e instanceof ApiError && e.code === "ILLEGAL_TRANSITION" ? t.orders.stale : t.error);
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+      onChange();
+    }
+  };
+  return (
+    <li className={`${card} flex flex-col gap-2`} data-testid="board-order" data-order-id={o.order_id} data-state={o.state}>
+      <p className="font-semibold">
+        <span className="font-mono text-xs text-neutral-500">{o.order_id.slice(0, 8).toUpperCase()}</span>{" "}
+        <span data-testid="board-state">{label(o.state)}</span> · <span className={o.late ? "text-red-700" : ""}>{fill(t.orders.age, { n: o.age_days })}</span>
+      </p>
+      {o.late && <p className="text-sm text-red-700">{t.orders.late}</p>}
+      {o.callback_requested_at && (
+        <p className="self-start rounded bg-amber-100 px-2 py-0.5 text-sm font-medium text-amber-900 dark:bg-amber-900 dark:text-amber-100">{t.sla.callMe}</p>
+      )}
+      <p className="text-sm">{o.products.join(", ")}</p>
+      {o.eta && <p className="text-xs text-neutral-500">{fill(t.orders.eta, { date: o.eta })}</p>}
+      {o.visit ? (
+        <p className="text-sm" data-testid="board-visit">
+          {fill(t.orders.visit, { date: o.visit.date, window: t.orders.windows[o.visit.window] ?? o.visit.window })}
+        </p>
+      ) : (
+        o.state === "INSTALL_SCHEDULED" && <p className="text-sm text-neutral-600 dark:text-neutral-300">{t.orders.noVisit}</p>
+      )}
+      <div className="flex flex-wrap items-center gap-3">
+        {o.next_steps.length === 0 && <span className="text-xs text-neutral-500">{t.orders.finished}</span>}
+        {!confirming &&
+          o.next_steps.map((step) => (
+            <button
+              key={step}
+              type="button"
+              disabled={busy}
+              data-testid={`post-${step}`}
+              className={`${button} ${step === "NOT_FEASIBLE" ? "border border-red-300 text-red-700" : "bg-red-700 text-white"}`}
+              onClick={() => (step === "NOT_FEASIBLE" ? setConfirming(true) : void post(step))}
+            >
+              {t.orders.actions[step] ?? step}
+            </button>
+          ))}
+        {confirming && (
+          <>
+            <span className="text-sm">{t.orders.confirmNotFeasible}</span>
+            <button type="button" disabled={busy} className={`${button} bg-red-700 text-white`} onClick={() => void post("NOT_FEASIBLE")}>
+              {t.orders.confirm}
+            </button>
+            <button type="button" disabled={busy} className={`${button} border border-neutral-300`} onClick={() => setConfirming(false)}>
+              {t.orders.keep}
+            </button>
+          </>
+        )}
+        <Reveal kind="ORDER" refId={o.order_id} t={t} defaultReason="FULFILMENT" />
+      </div>
+      {message && (
+        <p role="status" className="text-sm text-neutral-600 dark:text-neutral-300">
+          {message}
+        </p>
+      )}
     </li>
   );
 }

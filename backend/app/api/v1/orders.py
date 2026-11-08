@@ -8,8 +8,6 @@
   tracker (timeline, per-line ETAs, SLA, KYC fixes, NOT_FEASIBLE alternative). Reading
   first catches the order up with the latest KYC verdict and the day-21 SLA check.
 * ``POST /orders/{id}/cancel``: owner cancels before an engineer is booked.
-* ``POST /orders/{id}/fulfilment``: **non-production only** — stands in for operations
-  (feasibility, install, activation) until the back office lands. Same guards.
 * ``POST /orders/{id}/payments`` (``Idempotency-Key`` required): mock charge of setup
   + first month once KYC has passed. A decline leaves ``PAYMENT_FAILED`` (retry with a
   new key, N4). ``simulate`` forces an outcome outside production.
@@ -43,7 +41,7 @@ from app.checkout.orders import (
     payment_view,
 )
 from app.config import Clock, get_clock
-from app.db.models import ConsentPurpose, KycStatus, Order, OrderState
+from app.db.models import ConsentPurpose, KycStatus, Order
 from app.orders.eta import SLA_DAYS
 from app.orders.service import TrackerError
 
@@ -62,12 +60,6 @@ class PlaceOrder(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     quote_id: Annotated[str, Field(min_length=36, max_length=36)]
-
-
-class Fulfil(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    state: OrderState
 
 
 class SlotChoice(BaseModel):
@@ -245,26 +237,6 @@ def demo_make_late(
     )
     db.commit()
     services.tracker.check_sla(db, clock, order)
-    return _view(request, db, clock, services, order)
-
-
-@router.post("/{order_id}/fulfilment")
-def fulfil(
-    order_id: str,
-    body: Fulfil,
-    request: Request,
-    db: Db,
-    clock: ClockDep,
-    services: Services,
-    principal: Principal,
-) -> dict[str, Any]:
-    if not _demo(request):  # operations use the back office in production
-        raise HTTPException(status.HTTP_404_NOT_FOUND, {"code": "NOT_FOUND"})
-    order = _owned(db, principal, order_id)
-    try:
-        services.tracker.fulfil(db, clock, order, body.state)
-    except TrackerError as exc:
-        raise _fail(exc) from None
     return _view(request, db, clock, services, order)
 
 

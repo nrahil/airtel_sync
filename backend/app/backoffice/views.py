@@ -64,15 +64,18 @@ from app.kyc.review_queue import ReviewItemNotFoundError, ReviewQueue
 from app.kyc.service import KycService
 from app.kyc.storage import BlobIntegrityError
 from app.kyc.types import Check, CheckStatus
-from app.orders.eta import CLOSED, age_days, sla_due
+from app.orders.eta import CLOSED, age_days, sla_breached, sla_due
 from app.orders.notifications import OrderNotifier
-from app.orders.service import TrackerError, TrackerService
+from app.orders.service import TrackerError, TrackerService, next_fulfilment_steps
 from app.security.pii_mask import mask_gstin, mask_name
 from app.security.vault import ErasedError, VaultKeyError
 
 log = logging.getLogger("udyam.backoffice")
 
 S = OrderState
+
+BOARD_OPEN: Final = (S.PAYMENT_CONFIRMED, S.FEASIBILITY_CHECK, S.INSTALL_SCHEDULED, S.INSTALLED)
+BOARD_FINISHED: Final = 20
 
 # Leads we would not call back: activated already, or the number is known to be bad.
 _NOT_CALLABLE: Final = frozenset({DropReason.WRONG_NUMBER})
@@ -902,6 +905,43 @@ class BackofficeService:
             for o in orders
         ]
         return {"orders": rows}
+
+    def order_board(self, db: Session, clock: Clock, staff: Staff) -> dict[str, Any]:
+        """Paid orders being installed (oldest first), then the latest finished ones."""
+        staff.require(Perm.ORDERS_READ)
+        waiting = db.scalars(
+            select(Order).where(Order.state.in_(BOARD_OPEN)).order_by(Order.created_at)
+        )
+        finished = db.scalars(
+            select(Order)
+            .where(Order.state.in_((S.ACTIVATED, S.NOT_FEASIBLE)))
+            .order_by(Order.created_at.desc())
+            .limit(BOARD_FINISHED)
+        )
+        today = clock.today()
+
+        def row(o: Order) -> dict[str, Any]:
+            booking = self.tracker.booking(db, o)
+            return {
+                "order_id": o.id,
+                "state": o.state.value,
+                "age_days": age_days(o.created_at, today),
+                "sla_due": sla_due(o.created_at).isoformat(),
+                "late": sla_breached(o.state, o.created_at, today),
+                "eta": o.eta.isoformat() if o.eta else None,
+                "products": [line["product_name"] for line in o.quote.payload["lines"]],
+                "visit": {"date": booking.slot_date.isoformat(), "window": booking.window}
+                if booking
+                else None,
+                "callback_requested_at": (
+                    o.quote.session.callback_requested_at.isoformat()
+                    if o.quote.session.callback_requested_at
+                    else None
+                ),
+                "next_steps": [s.value for s in next_fulfilment_steps(o.state)],
+            }
+
+        return {"orders": [row(o) for o in [*waiting, *finished]]}
 
     def fulfil(
         self, db: Session, clock: Clock, staff: Staff, order_id: str, target: OrderState

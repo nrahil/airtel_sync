@@ -6,7 +6,7 @@ These pin the rules independently of OCR quirks, so they run identically everywh
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, Final
 
 import pytest
 from PIL import Image, ImageDraw, ImageFilter
@@ -71,6 +71,7 @@ def gst_doc(gstin: str = GANESH, **overrides: Any) -> Extraction:
         "trade_name": fv("Ganesh Woodcraft"),
         "constitution": fv("Proprietorship"),
         "address": fv("Shop/Unit 80, Civil Lines, Nagpur, Maharashtra - 411231"),
+        "date_of_liability": fv("2020-02-10"),
     }
     fields.update(overrides.pop("fields", {}))
     return Extraction(
@@ -83,6 +84,8 @@ def udyam_doc(number: str = UDYAM_GANESH, **overrides: Any) -> Extraction:
         "udyam_number": fv(number),
         "enterprise_name": fv("Ganesh Woodcraft"),
         "major_activity": fv("Manufacturing"),
+        "city": fv("Nagpur"),
+        "state": fv("Maharashtra"),
         "date_of_registration": fv("2024-10-01"),
     }
     reads = (number,) if number else ()
@@ -260,6 +263,16 @@ def _text_page(angle: float = 0.0) -> Image.Image:
     return img.rotate(angle, expand=True, fillcolor="white") if angle else img
 
 
+def test_watermark_on_grey_paper_becomes_paper_not_white() -> None:
+    """A photo's paper is grey: white scars across the text would break page OCR."""
+    img = Image.new("RGB", (10, 1), (190, 190, 190))
+    for x in (2, 3):
+        img.putpixel((x, 0), (225, 160, 160))  # watermark
+    gray = remove_watermark(img)
+    assert gray[0, 2] == pytest.approx(190.0)
+    assert gray[0, 3] == pytest.approx(190.0)
+
+
 def test_watermark_is_removed_but_dark_red_kept() -> None:
     img = Image.new("RGB", (10, 1), (235, 180, 180))
     img.putpixel((0, 0), (140, 20, 20))  # dark red footer text
@@ -378,7 +391,7 @@ def test_d4_unknown_but_valid_gstin_is_not_found(registries: Registries) -> None
 
     unknown = "27ABCDE1234F2Z" + gstin_check_char("27ABCDE1234F2Z")
     verdict = run(full(gst=gst_doc(unknown)), registries)
-    assert verdict.decision is Decision.FAIL
+    assert verdict.decision is Decision.REVIEW
     assert KycReason.GSTIN_NOT_FOUND.value in verdict.reasons
 
 
@@ -388,10 +401,10 @@ def test_gstin_different_from_record_is_reviewed(registries: Registries) -> None
     assert KycReason.GSTIN_NOT_ON_RECORD.value in verdict.reasons
 
 
-def test_d9_legal_name_mismatch_fails_and_queues_review(registries: Registries) -> None:
+def test_d9_legal_name_mismatch_goes_to_review(registries: Registries) -> None:
     gst = gst_doc(fields={"legal_name": fv("Joseph Singh (Prop. Shri Woodcraft)")})
     verdict = run(full(gst=gst), registries)
-    assert verdict.decision is Decision.FAIL
+    assert verdict.decision is Decision.REVIEW
     assert verdict.review_required
     check = next(c for c in verdict.checks if c.reason is KycReason.LEGAL_NAME_MISMATCH)
     assert check.evidence == {"document": "J. S. (Prop. S. W.)", "registry": "J. S. (Prop. G. W.)"}
@@ -400,20 +413,20 @@ def test_d9_legal_name_mismatch_fails_and_queues_review(registries: Registries) 
 def test_d5_blank_udyam_number(registries: Registries) -> None:
     blank = udyam_doc("")
     on_record = run(full(udyam=blank), registries)
-    assert on_record.decision is Decision.FAIL
+    assert on_record.decision is Decision.REVIEW
     none_on_record = run(
         full(udyam=blank), registries, CTX.model_copy(update={"udyam_on_record": None})
     )
     check = next(c for c in none_on_record.checks if c.reason is KycReason.UDYAM_NUMBER_MISSING)
-    assert check.status is CheckStatus.WARN
-    assert none_on_record.decision is Decision.PASS
+    assert check.status is CheckStatus.REVIEW
+    assert none_on_record.decision is Decision.REVIEW
 
 
 def test_d6_missing_udyam_offers_lookup_and_is_optional_without_record(
     registries: Registries,
 ) -> None:
     verdict = run(full(udyam=None), registries)
-    assert verdict.decision is Decision.ACTION_NEEDED
+    assert verdict.decision is Decision.REVIEW
     assert verdict.lookup_offered
     optional = run(full(udyam=None), registries, CTX.model_copy(update={"udyam_on_record": None}))
     assert optional.decision is Decision.PASS
@@ -436,7 +449,7 @@ def test_udyam_not_found_and_not_on_record(registries: Registries) -> None:
     assert KycReason.UDYAM_NOT_ON_RECORD.value in verdict.reasons
 
 
-def test_d11_udyam_noise_is_warn(registries: Registries) -> None:
+def test_d11_udyam_date_and_activity_differences_go_to_review(registries: Registries) -> None:
     doc = udyam_doc().model_copy(
         update={
             "fields": {
@@ -447,14 +460,14 @@ def test_d11_udyam_noise_is_warn(registries: Registries) -> None:
         }
     )
     verdict = run(full(udyam=doc), registries)
-    assert verdict.decision is Decision.PASS
-    warns = {c.reason for c in verdict.checks if c.status is CheckStatus.WARN}
-    assert warns == {KycReason.UDYAM_DATE_MISMATCH, KycReason.UDYAM_ACTIVITY_MISMATCH}
+    assert verdict.decision is Decision.REVIEW
+    flagged = {c.reason for c in verdict.checks if c.status is CheckStatus.REVIEW}
+    assert flagged == {KycReason.UDYAM_DATE_MISMATCH, KycReason.UDYAM_ACTIVITY_MISMATCH}
 
 
 def test_d8_expired_signatory_id(registries: Registries) -> None:
     verdict = run(full(signatory=id_doc(valid_till="2026-07-14")), registries)
-    assert verdict.decision is Decision.FAIL
+    assert verdict.decision is Decision.REVIEW
     assert KycReason.SIGNATORY_ID_EXPIRED.value in verdict.reasons
 
 
@@ -470,7 +483,7 @@ def test_d10_signatory_authorisation(registries: Registries) -> None:
 
 def test_d7_stale_and_future_bills(registries: Registries) -> None:
     stale = run(full(bill=bill_doc("2026-04-15")), registries)
-    assert stale.decision is Decision.FAIL
+    assert stale.decision is Decision.REVIEW
     check = next(c for c in stale.checks if c.reason is KycReason.ADDRESS_PROOF_STALE)
     assert check.params == {"bill_date": "2026-04-15", "cutoff": "2026-04-16", "age_days": 91}
     assert run(full(bill=bill_doc("2026-04-16")), registries).decision is Decision.PASS
@@ -500,7 +513,7 @@ def test_low_confidence_never_passes(registries: Registries) -> None:
 
 def test_missing_and_unreadable_documents(registries: Registries) -> None:
     verdict = run(full(gst=None, signatory=None, bill=None), registries)
-    assert verdict.decision is Decision.ACTION_NEEDED
+    assert verdict.decision is Decision.REVIEW
     assert {
         "DOCUMENT_MISSING:GST",
         "DOCUMENT_MISSING:SIGNATORY_ID",
@@ -514,7 +527,7 @@ def test_missing_and_unreadable_documents(registries: Registries) -> None:
 
 def test_n2_ocr_unavailable_and_manual_entry_goes_to_review(registries: Registries) -> None:
     down = Extraction(slot=DocSlot.GST_CERTIFICATE, blocking=KycReason.OCR_UNAVAILABLE)
-    assert run(full(gst=down), registries).decision is Decision.ACTION_NEEDED
+    assert run(full(gst=down), registries).decision is Decision.REVIEW
     manual = Extraction(
         slot=DocSlot.GST_CERTIFICATE, source=Source.MANUAL, identifier_reads=(GANESH,)
     )
@@ -538,14 +551,37 @@ def test_n3_registry_outage_is_pending_never_pass() -> None:
         ([CheckStatus.PASS, CheckStatus.WARN], Decision.PASS),
         ([CheckStatus.PASS, CheckStatus.REVIEW], Decision.REVIEW),
         ([CheckStatus.REVIEW, CheckStatus.PENDING], Decision.PENDING),
-        ([CheckStatus.PENDING, CheckStatus.ACTION], Decision.ACTION_NEEDED),
-        ([CheckStatus.ACTION, CheckStatus.FAIL, CheckStatus.REVIEW], Decision.FAIL),
+        ([CheckStatus.PENDING, CheckStatus.ACTION], Decision.PENDING),
+        ([CheckStatus.ACTION, CheckStatus.FAIL, CheckStatus.REVIEW], Decision.REVIEW),
         ([], Decision.PASS),
     ],
 )
 def test_decision_precedence(statuses: list[CheckStatus], decision: Decision) -> None:
     checks = [Check(check_id=f"c{i}", status=s) for i, s in enumerate(statuses)]
     assert decide(checks).decision is decision
+
+
+@pytest.mark.parametrize("reason", [KycReason.GSTIN_CANCELLED, KycReason.GSTIN_SUSPENDED])
+def test_only_a_registration_not_in_force_is_rejected(reason: KycReason) -> None:
+    rejected = Check(check_id="gst.status", status=CheckStatus.FAIL, reason=reason)
+    other = Check(check_id="x", status=CheckStatus.REVIEW, reason=KycReason.UDYAM_DATE_MISMATCH)
+    verdict = decide([rejected, other])
+    assert verdict.decision is Decision.FAIL
+    assert not verdict.review_required
+
+
+def test_nothing_uploaded_asks_for_documents_instead_of_a_reviewer(registries: Registries) -> None:
+    verdict = run({}, registries)
+    assert verdict.decision is Decision.ACTION_NEEDED
+    assert not verdict.review_required
+
+
+def test_unreadable_udyam_date_is_not_called_a_mismatch(registries: Registries) -> None:
+    fields = {**udyam_doc().fields, "date_of_registration": fv("20Z4-1x-01")}
+    verdict = run(full(udyam=udyam_doc().model_copy(update={"fields": fields})), registries)
+    assert verdict.decision is Decision.REVIEW
+    assert KycReason.FIELD_UNREADABLE.value in verdict.reasons
+    assert KycReason.UDYAM_DATE_MISMATCH.value not in verdict.reasons
 
 
 def test_messages_localise_and_fall_back() -> None:
@@ -579,8 +615,6 @@ def test_every_reason_with_a_user_action_has_an_english_message() -> None:
 
     silent = {
         KycReason.DESKEWED,
-        KycReason.UDYAM_DATE_MISMATCH,
-        KycReason.UDYAM_ACTIVITY_MISMATCH,
         KycReason.UDYAM_OCR_CORRECTED,
         KycReason.UDYAM_VERIFIED_BY_LOOKUP,
         KycReason.GSTIN_VERIFIED_BY_LOOKUP,
@@ -644,3 +678,64 @@ def test_hindi_fix_messages_use_hindi_month_names() -> None:
         "Your electricity bill is dated 31 Oct 2025, more than 90 days ago. "
         "Please upload a bill dated on or after 16 Apr 2026."
     )
+
+
+# ------------------------------------------------------------------ fields every specimen agrees on
+
+
+_UNIT_81: Final = "Shop/Unit 81, Civil Lines, Nagpur, Maharashtra - 411231"
+_UNIT_18: Final = "Shop/Unit 18, Civil Lines, Nagpur, Maharashtra - 411231"
+_IN_PUNE: Final = udyam_doc().model_copy(
+    update={"fields": {**udyam_doc().fields, "city": fv("Pune")}}
+)
+
+
+@pytest.mark.parametrize(
+    ("docs", "reason"),
+    [
+        (full(gst=gst_doc(fields={"address": fv(_UNIT_81)})), KycReason.GST_ADDRESS_MISMATCH),
+        (
+            full(gst=gst_doc(fields={"date_of_liability": fv("2021-02-10")})),
+            KycReason.GST_DATE_MISMATCH,
+        ),
+        (full(udyam=_IN_PUNE), KycReason.UDYAM_LOCATION_MISMATCH),
+        (full(bill=bill_doc(supply_address=_UNIT_18)), KycReason.ADDRESS_MISMATCH),
+    ],
+)
+def test_registry_fields_that_differ_go_to_a_person(
+    docs: dict[DocSlot, Extraction], reason: KycReason, registries: Registries
+) -> None:
+    verdict = run(docs, registries)
+    assert verdict.decision is Decision.REVIEW
+    assert reason.value in verdict.reasons
+
+
+def test_udyam_date_and_activity_mismatch_is_never_verified(registries: Registries) -> None:
+    fields = {
+        **udyam_doc().fields,
+        "date_of_registration": fv("2023-01-11"),
+        "major_activity": fv("Services"),
+    }
+    verdict = run(full(udyam=udyam_doc().model_copy(update={"fields": fields})), registries)
+    assert verdict.decision is Decision.REVIEW
+    assert {
+        KycReason.UDYAM_DATE_MISMATCH.value,
+        KycReason.UDYAM_ACTIVITY_MISMATCH.value,
+    } <= verdict.reasons
+
+
+def test_unreadable_udyam_enterprise_name_is_not_skipped(registries: Registries) -> None:
+    fields = {k: v for k, v in udyam_doc().fields.items() if k != "enterprise_name"}
+    verdict = run(full(udyam=udyam_doc().model_copy(update={"fields": fields})), registries)
+    assert verdict.decision is Decision.REVIEW
+    assert KycReason.FIELD_UNREADABLE.value in verdict.reasons
+
+
+def test_udyam_number_label_not_found_is_unreadable_not_blank(registries: Registries) -> None:
+    """No label on the page read (a watermark across it) ≠ a certificate with no number."""
+    fields = {k: v for k, v in udyam_doc().fields.items() if k != "udyam_number"}
+    unreadable = udyam_doc().model_copy(update={"fields": fields, "identifier_reads": ()})
+    verdict = run(full(udyam=unreadable), registries)
+    assert verdict.decision is Decision.REVIEW
+    assert KycReason.FIELD_UNREADABLE.value in verdict.reasons
+    assert KycReason.UDYAM_NUMBER_MISSING.value not in verdict.reasons

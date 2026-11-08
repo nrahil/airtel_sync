@@ -26,7 +26,7 @@ from tests.kyc_golden.conftest import (
 
 pytestmark = requires_tesseract
 
-CLEAN = ("K03", "K09", "K12")
+CLEAN = ("C01",)
 
 
 def verdict_for(specimen: str, registries: Registries, locale: str = "en") -> Verdict:
@@ -55,17 +55,13 @@ def test_clean_specimens_have_nothing_blocking(specimen: str, registries: Regist
     assert not verdict.review_required
 
 
-def test_kg_13_udyam_date_and_activity_noise_is_warn_only(registries: Registries) -> None:
-    noise = {KycReason.UDYAM_DATE_MISMATCH, KycReason.UDYAM_ACTIVITY_MISMATCH}
-    seen = 0
-    for specimen in ("K02", "K03", "K08", "K09", "K12"):
-        verdict = verdict_for(specimen, registries)
-        for check in verdict.checks:
-            if check.reason in noise:
-                seen += 1
-                assert check.status is CheckStatus.WARN
-        assert verdict.decision is Decision.PASS
-    assert seen >= 5  # the noise really is present in the clean specimens
+@pytest.mark.parametrize("specimen", ["K02", "K03", "K08", "K09", "K12"])
+def test_kg_13_udyam_differences_go_to_a_person(specimen: str, registries: Registries) -> None:
+    verdict = verdict_for(specimen, registries)
+    assert verdict.decision is Decision.REVIEW
+    assert verdict.review_required
+    flagged = next(c for c in verdict.checks if c.reason is KycReason.UDYAM_DATE_MISMATCH)
+    assert flagged.status is CheckStatus.REVIEW
 
 
 @pytest.mark.parametrize("specimen", ["K01", "K05", "K09", "K11", "K12"])
@@ -80,10 +76,17 @@ def test_kg_14_wrapped_addresses_are_joined(specimen: str, registries: Registrie
 
 
 def test_kg_15_no_pincode_state_check(registries: Registries) -> None:
-    verdict = verdict_for("K03", registries)
+    # Pincode 411231 is not a Nagpur pincode (synthetic pincodes, D13); it still passes.
+    verdict = verdict_for("C01", registries)
+    assert verdict.decision is Decision.PASS
     assert not [c for c in verdict.checks if "pincode" in c.check_id.lower()]
-    # A pincode that "belongs" to another state changes nothing (synthetic pincodes, D13).
-    docs = documents("K03")
+
+
+def test_bill_with_another_pincode_than_the_registered_address_goes_to_review(
+    registries: Registries,
+) -> None:
+    """Same words, different pincode: not the registered premises, so a person looks."""
+    docs = documents("C01")
     bill = docs[DocSlot.ADDRESS_PROOF]
     address = bill.fields["supply_address"]
     moved = address.text.rsplit("-", 1)[0] + "- 110001"
@@ -92,18 +95,19 @@ def test_kg_15_no_pincode_state_check(registries: Registries) -> None:
         "supply_address": FieldValue(text=moved, confidence=address.confidence),
     }
     docs[DocSlot.ADDRESS_PROOF] = bill.model_copy(update={"fields": fields})
-    again = decide(evaluate(docs, context("K03"), registries, TODAY))
-    assert again.decision is Decision.PASS
+    again = decide(evaluate(docs, context("C01"), registries, TODAY))
+    assert again.decision is Decision.REVIEW
+    assert KycReason.ADDRESS_MISMATCH.value in again.reasons
 
 
 def test_kg_16_bill_in_gst_slot_is_wrong_document_type(registries: Registries) -> None:
-    with Image.open(specimen_path("K03", DocSlot.ADDRESS_PROOF)) as img:
+    with Image.open(specimen_path("C01", DocSlot.ADDRESS_PROOF)) as img:
         wrong = extract_document(img, DocSlot.GST_CERTIFICATE, engine())
     assert wrong.blocking is KycReason.WRONG_DOCUMENT_TYPE
     assert wrong.detected_type is DocSlot.ADDRESS_PROOF
-    docs = {**documents("K03"), DocSlot.GST_CERTIFICATE: wrong}
-    verdict = decide(evaluate(docs, context("K03"), registries, TODAY))
-    assert verdict.decision is Decision.ACTION_NEEDED
+    docs = {**documents("C01"), DocSlot.GST_CERTIFICATE: wrong}
+    verdict = decide(evaluate(docs, context("C01"), registries, TODAY))
+    assert verdict.decision is Decision.REVIEW
     fix = next(f for f in verdict.fixes if f.reason is KycReason.WRONG_DOCUMENT_TYPE)
     assert fix.message == (
         "This looks like your electricity bill, not your GST certificate. "

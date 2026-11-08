@@ -7,7 +7,8 @@
 The password is read from ``STAFF_PASSWORD`` or prompted for (never an argument, so it
 does not land in shell history). ``--demo`` creates one user per role — ``sales``,
 ``partner`` (firm ``PARTNER-DEMO``, given the first 25 channel-partner leads),
-``reviewer`` and ``admin`` — all with the password in ``BACKOFFICE_DEMO_PASSWORD``.
+``reviewer``, ``ops`` (posts order updates) and ``admin`` — all with the password in
+``BACKOFFICE_DEMO_PASSWORD``.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from collections.abc import Sequence
 from typing import Final
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.backoffice.staff import StaffAccountError, create_staff
@@ -33,6 +35,7 @@ DEMO_USERS: Final = (
     ("sales", StaffRole.SALES, None),
     ("partner", StaffRole.PARTNER, DEMO_PARTNER),
     ("reviewer", StaffRole.KYC_REVIEWER, None),
+    ("ops", StaffRole.OPS, None),
     ("admin", StaffRole.ADMIN, None),
 )
 DEMO_PARTNER_LEADS: Final = 25
@@ -49,7 +52,19 @@ def _demo(db: Session) -> int:
         if db.scalar(select(StaffUser.id).where(StaffUser.username == username)):
             print(f"{username}: exists")
             continue
-        create_staff(db, clock, username=username, password=password, role=role, partner_id=partner)
+        try:
+            create_staff(
+                db, clock, username=username, password=password, role=role, partner_id=partner
+            )
+            db.commit()
+        except IntegrityError:  # no migrations yet: an older file keeps its old role list
+            db.rollback()
+            print(
+                f"{username}: skipped - this database predates the {role.value} role. "
+                "Use admin, or delete the SQLite file to recreate it.",
+                file=sys.stderr,
+            )
+            continue
         print(f"{username}: created ({role.value})")
     leads = load_leads(cfg.data_dir / "smb_leads.csv")
     taken = set(db.scalars(select(LeadAssignment.lead_ref)))

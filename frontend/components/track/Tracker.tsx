@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { OtpStep } from "@/components/checkout/OtpStep";
 import {
@@ -17,7 +17,6 @@ import {
   getToken,
   requestOrderCallback,
   setToken,
-  simulateFulfilment,
   simulateLate,
 } from "@/lib/api";
 import { formatPaise } from "@/lib/format";
@@ -33,13 +32,9 @@ export function formatDay(iso: string, locale: Locale): string {
   }).format(d);
 }
 
-/** Demo only: the next step operations would take from each fulfilment state. */
-const NEXT_STEP: Partial<Record<OrderState, OrderState>> = {
-  PAYMENT_CONFIRMED: "FEASIBILITY_CHECK",
-  FEASIBILITY_CHECK: "INSTALL_SCHEDULED",
-  INSTALL_SCHEDULED: "INSTALLED",
-  INSTALLED: "ACTIVATED",
-};
+/** How often an open tracker asks for news: staff post each step from the back office. */
+const POLL_MS = 10_000;
+const FINISHED: OrderState[] = ["ACTIVATED", "CANCELLED", "NOT_FEASIBLE"];
 
 const DOT: Record<StepStatus, string> = {
   done: "bg-green-600 ring-green-600",
@@ -56,6 +51,8 @@ export function Tracker({ locale, t, orderId }: { locale: Locale; t: Messages; o
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  // Bumped around the owner's own actions, so an older background read can't undo them.
+  const epoch = useRef(0);
 
   const load = useCallback(async () => {
     setProblem(null);
@@ -79,14 +76,42 @@ export function Tracker({ locale, t, orderId }: { locale: Locale; t: Messages; o
     else setNeedsSignIn(true);
   }, [load]);
 
+  const state = order?.state;
+  const watching = state !== undefined && !FINISHED.includes(state);
+  useEffect(() => {
+    if (!watching) return;
+    const tick = async () => {
+      if (document.visibilityState !== "visible") return;
+      const started = epoch.current;
+      try {
+        const fresh = await getOrder(orderId);
+        if (started === epoch.current) setOrder(fresh);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          setToken(null);
+          setNeedsSignIn(true);
+        } // anything else: stay quiet, the next tick tries again
+      }
+    };
+    const id = setInterval(() => void tick(), POLL_MS);
+    const onVisible = () => void tick();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [watching, orderId]);
+
   const act = async (fn: () => Promise<Order>) => {
     setBusy(true);
     setProblem(null);
+    epoch.current += 1;
     try {
       setOrder(await fn());
     } catch {
       setProblem(t.advisor.error);
     } finally {
+      epoch.current += 1;
       setBusy(false);
       setConfirmCancel(false);
     }
@@ -112,9 +137,8 @@ export function Tracker({ locale, t, orderId }: { locale: Locale; t: Messages; o
   const tr = order.tracker;
   const ref = order.order_id.slice(0, 8).toUpperCase();
   const label = (s: OrderState) => t.track.states[s];
-  const nextStep = NEXT_STEP[order.state];
   // Demo: show the late path (day 21+) for any order still open.
-  const canAge = !tr.late && !["ACTIVATED", "CANCELLED", "NOT_FEASIBLE"].includes(order.state);
+  const canAge = !tr.late && !FINISHED.includes(order.state);
 
   return (
     <div className="flex flex-col gap-5">
@@ -122,7 +146,7 @@ export function Tracker({ locale, t, orderId }: { locale: Locale; t: Messages; o
         <p className="font-mono text-sm text-neutral-500" data-testid="order-ref">
           {fill(t.track.orderNumber, { ref })}
         </p>
-        <p className="text-xl font-semibold" data-testid="order-state">
+        <p className="text-xl font-semibold" data-testid="order-state" aria-live="polite">
           {label(order.state)}
         </p>
         {tr.eta && (
@@ -302,33 +326,18 @@ export function Tracker({ locale, t, orderId }: { locale: Locale; t: Messages; o
         )}
       </div>
 
-      {tr.can_simulate && (nextStep || canAge) && (
+      {tr.can_simulate && canAge && (
         <section data-testid="demo" className="flex flex-col gap-2 rounded-xl border border-dashed border-neutral-400 p-3 text-sm">
           <p className="font-medium">{t.track.demo}</p>
-          <p className="text-xs text-neutral-500">{t.track.demoNote}</p>
-          <div className="flex flex-wrap gap-2">
-            {nextStep && (
-              <button type="button" disabled={busy} onClick={() => void act(() => simulateFulfilment(order.order_id, nextStep))} className="rounded-lg px-3 py-2 ring-1 ring-neutral-300 disabled:opacity-50">
-                → {label(nextStep)}
-              </button>
-            )}
-            {order.state === "FEASIBILITY_CHECK" && (
-              <button type="button" disabled={busy} onClick={() => void act(() => simulateFulfilment(order.order_id, "NOT_FEASIBLE"))} className="rounded-lg px-3 py-2 ring-1 ring-neutral-300 disabled:opacity-50">
-                → {label("NOT_FEASIBLE")}
-              </button>
-            )}
-            {canAge && (
-              <button
-                type="button"
-                data-testid="demo-late"
-                disabled={busy}
-                onClick={() => void act(() => simulateLate(order.order_id))}
-                className="rounded-lg px-3 py-2 ring-1 ring-neutral-300 disabled:opacity-50"
-              >
-                {t.track.demoLate}
-              </button>
-            )}
-          </div>
+          <button
+            type="button"
+            data-testid="demo-late"
+            disabled={busy}
+            onClick={() => void act(() => simulateLate(order.order_id))}
+            className="self-start rounded-lg px-3 py-2 ring-1 ring-neutral-300 disabled:opacity-50"
+          >
+            {t.track.demoLate}
+          </button>
         </section>
       )}
 

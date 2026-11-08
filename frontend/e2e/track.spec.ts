@@ -1,6 +1,6 @@
 import { type Page, expect, test } from "@playwright/test";
 
-/** Order tracker against a mocked API: sign-in gate, timeline, ETAs, fixes, NOT_FEASIBLE, demo steps. */
+/** Order tracker against a mocked API: sign-in gate, timeline, ETAs, fixes, NOT_FEASIBLE, live staff updates. */
 
 const ID = "abcdef12-0000-4000-8000-000000000000";
 
@@ -64,16 +64,11 @@ async function signedIn(page: Page) {
 }
 
 async function mock(page: Page, responses: Record<string, unknown>) {
-  const seen: { fulfil: unknown[]; cancel: number } = { fulfil: [], cancel: 0 };
   let current = responses.get;
+  const seen = { cancel: 0, staffPosts: (next: unknown) => void (current = next) };
   await page.route("**/api/v1/**", async (route) => {
     const req = route.request();
     const path = new URL(req.url()).pathname;
-    if (path.endsWith(`/orders/${ID}/fulfilment`)) {
-      seen.fulfil.push(req.postDataJSON());
-      current = responses.fulfil;
-      return route.fulfill({ json: current });
-    }
     if (path.endsWith(`/orders/${ID}/cancel`)) {
       seen.cancel += 1;
       current = responses.cancel;
@@ -178,17 +173,17 @@ test("NOT_FEASIBLE offers the wireless alternative and the refund (TR-06)", asyn
   await expect(page.getByTestId("demo")).toHaveCount(0);
 });
 
-test("demo step and cancellation call the API", async ({ page }) => {
+test("a step staff post appears by itself; the owner has no step buttons", async ({ page }) => {
   await signedIn(page);
   const seen = await mock(page, {
     get: order("PAYMENT_CONFIRMED", "NONE"),
-    fulfil: order("FEASIBILITY_CHECK", "NONE"),
     cancel: order("CANCELLED", "NONE", { can_cancel: false, can_simulate: true, refund_due_paise: 141482 }),
   });
   await page.goto(`/en/track/${ID}`);
-  await page.getByTestId("demo").getByRole("button", { name: "→ Site check" }).click();
-  await expect(page.getByTestId("order-state")).toHaveText("Site check");
-  expect(seen.fulfil).toEqual([{ state: "FEASIBILITY_CHECK" }]);
+  await expect(page.getByTestId("order-state")).toHaveText("Payment received");
+  await expect(page.getByTestId("demo").getByRole("button")).toHaveCount(1); // only "make it late"
+  seen.staffPosts(order("FEASIBILITY_CHECK", "NONE"));
+  await expect(page.getByTestId("order-state")).toHaveText("Site check", { timeout: 15_000 });
 
   await page.getByRole("button", { name: "Cancel order" }).click();
   await page.getByRole("button", { name: "Yes, cancel" }).click();

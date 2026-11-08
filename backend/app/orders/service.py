@@ -3,9 +3,9 @@
 All state changes go through :class:`OrderStateMachine`, whose transition hook keeps
 the stored ETA current and sends the owner a proactive update.
 
-Fulfilment (feasibility → install → activation) is run by operations through
-:meth:`TrackerService.fulfil` — from the back office (``admin``), or outside
-production from the owner's demo endpoint. The guards are the same either way.
+Fulfilment (feasibility → install → activation) is run by staff through
+:meth:`TrackerService.fulfil`, from the back office (``ops`` and ``admin``). The owner
+cannot move their own order; they see each step on the tracker.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ from app.orders.state_machine import (
     TERMINAL,
     IllegalTransitionError,
     OrderStateMachine,
+    can_transition,
 )
 
 S = OrderState
@@ -52,18 +53,26 @@ KYC_TO_ORDER: Final[dict[KycStatus, OrderState | None]] = {
     KycStatus.PASS: S.KYC_VERIFIED,
 }
 AWAITING_KYC: Final = frozenset({S.QUOTE_ACCEPTED, S.KYC_SUBMITTED, S.KYC_ACTION_NEEDED})
-FULFILMENT_TARGETS: Final = frozenset(
-    {S.FEASIBILITY_CHECK, S.INSTALL_SCHEDULED, S.INSTALLED, S.ACTIVATED, S.NOT_FEASIBLE}
+FULFILMENT_STEPS: Final = (
+    S.FEASIBILITY_CHECK,
+    S.INSTALL_SCHEDULED,
+    S.INSTALLED,
+    S.ACTIVATED,
+    S.NOT_FEASIBLE,
 )
 WIRELESS_ALTERNATIVE: Final = "P04"
 SYSTEM: Final = "system"
-OPS: Final = "ops:mock"
 
 # Off-path states shown against the happy-path step they belong to.
 _STEP_OF: Final = {
     S.KYC_ACTION_NEEDED: S.KYC_SUBMITTED,
     S.PAYMENT_FAILED: S.PAYMENT_CONFIRMED,
 }
+
+
+def next_fulfilment_steps(state: OrderState) -> list[OrderState]:
+    """What staff may post next for an order in this state (the normal step first)."""
+    return [step for step in FULFILMENT_STEPS if can_transition(state, step)]
 
 
 class TrackerError(Exception):
@@ -180,10 +189,10 @@ class TrackerService:
             db.commit()
 
     def fulfil(
-        self, db: Session, clock: Clock, order: Order, target: OrderState, *, actor: str = OPS
+        self, db: Session, clock: Clock, order: Order, target: OrderState, *, actor: str
     ) -> None:
-        """Operations moves the install forward (back office, or the demo endpoint)."""
-        if target not in FULFILMENT_TARGETS:
+        """Staff post the next installation step from the back office."""
+        if target not in FULFILMENT_STEPS:
             raise TrackerError(422, "NOT_A_FULFILMENT_STEP", state=target.value)
         audit = AuditLog(db, clock)
         try:

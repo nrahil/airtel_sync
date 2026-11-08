@@ -425,7 +425,8 @@ export function KycScreen({ locale, t }: { locale: Locale; t: Messages }) {
   const fixesFor = (slot: DocSlot | null) =>
     slot && slots[slot] ? [] : (app.verdict?.fixes ?? []).filter((f) => f.slot === slot);
   const passed = app.status === "PASS";
-  const canFix = app.status === "ACTION_NEEDED" || app.status === "FAIL";
+  // A case in review may still list things only the owner can correct.
+  const canFix = app.status === "ACTION_NEEDED" || app.status === "FAIL" || app.status === "REVIEW";
 
   // Numbers given on record can be checked online instead of photographing a certificate.
   const onlineFor = (slot: DocSlot) =>

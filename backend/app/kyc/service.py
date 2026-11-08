@@ -10,7 +10,7 @@ about the database; this module wires it to storage:
   activation / drop / withdrawal;
 * ``submit`` evaluates every slot against the registries (an outage → PENDING),
   stores a masked verdict, queues review items and counts failed attempts;
-* after ``kyc_handoff_after_failures`` FAIL/ACTION_NEEDED submissions the case is
+* after ``kyc_handoff_after_failures`` submissions with something to fix the case is
   handed to a partner / field agent (J7).
 """
 
@@ -63,7 +63,7 @@ from app.security.vault import ErasedError, Vault, VaultKeyError
 
 log = logging.getLogger("udyam.kyc")
 
-_FAILED: Final = frozenset({Decision.FAIL, Decision.ACTION_NEEDED})
+_OWNER_MUST_ACT: Final = frozenset({CheckStatus.FAIL, CheckStatus.ACTION})
 _MANUAL_SLOTS: Final = frozenset({DocSlot.GST_CERTIFICATE, DocSlot.UDYAM_CERTIFICATE})
 
 
@@ -378,7 +378,7 @@ class KycService:
 
         queue = ReviewQueue(db, self.clock)
         queue.close_open_reviews(app)
-        if verdict.decision in _FAILED:
+        if any(c.status in _OWNER_MUST_ACT for c in verdict.checks):
             app.failed_attempts += 1
         if app.failed_attempts >= self.handoff_after and verdict.decision is not Decision.PASS:
             if not app.handed_off:
@@ -393,7 +393,10 @@ class KycService:
             )
             verdict = decide((*verdict.checks, handoff), locale)
         if verdict.review_required and verdict.decision is not Decision.PENDING:
-            reasons = [c.reason.value for c in verdict.checks if c.needs_review and c.reason]
+            settled = (CheckStatus.PASS, CheckStatus.WARN)
+            reasons = [
+                c.reason.value for c in verdict.checks if c.reason and c.status not in settled
+            ]
             queue.enqueue(app, ReviewKind.REVIEW, reasons)
 
         app.status = KycStatus(verdict.decision.value)

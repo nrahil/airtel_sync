@@ -23,7 +23,7 @@ const t = hi;
 const API = `http://127.0.0.1:${process.env.E2E_API_PORT ?? 8100}/api/v1`;
 const OUT = process.env.DEMO_VIDEO_DIR ?? path.resolve(__dirname, "../test-results/demo-video");
 const SPECIMENS = path.resolve(__dirname, "../../backend/tests/fixtures/kyc/specimens");
-const K03 = { name: "Joseph Singh", gstin: "27XUIXG0767D1ZP", udyam: "UDYAM-MH-00-9516696" };
+const C01 = { name: "Joseph Singh", gstin: "27XUIXG0767D1ZP", udyam: "UDYAM-MH-00-9516696" };
 const PASSWORD = process.env.BACKOFFICE_DEMO_PASSWORD ?? "demo-password-2026"; // gitleaks:allow (demo users)
 const before = (template: string) => template.split("{")[0].trim();
 
@@ -164,9 +164,9 @@ test("demo video", async ({ browser, request }) => {
 
   // 1:15 Smart KYC, fastest path
   const record = page.getByTestId("kyc-on-record");
-  await record.getByLabel(t.kyc.contactName).fill(K03.name);
-  await record.getByLabel(t.kyc.gstin).fill(K03.gstin);
-  await record.getByLabel(t.kyc.udyam).fill(K03.udyam);
+  await record.getByLabel(t.kyc.contactName).fill(C01.name);
+  await record.getByLabel(t.kyc.gstin).fill(C01.gstin);
+  await record.getByLabel(t.kyc.udyam).fill(C01.udyam);
   await say(page, "KYC: the GSTIN is matched with the registry as it is typed ('Is this your business?').", 4500);
   await record.getByRole("button", { name: t.kyc.start }).click();
   await say(page, "Fastest way first: online check (instant) → DigiLocker (~30 s) → photo (~1 min).", 5500);
@@ -180,7 +180,7 @@ test("demo video", async ({ browser, request }) => {
     await dialog.getByRole("button", { name: t.kyc.digilockerAllow, exact: true }).click();
     await expect(page.getByTestId(`kyc-slot-${slot}`).getByTestId("kyc-slot-done")).toBeVisible({ timeout: 20_000 });
   }
-  await page.getByTestId("kyc-file-ADDRESS_PROOF").setInputFiles(path.join(SPECIMENS, "K03_address_proof.png"));
+  await page.getByTestId("kyc-file-ADDRESS_PROOF").setInputFiles(path.join(SPECIMENS, "C01_address_proof.png"));
   await expect(page.getByTestId("kyc-slot-ADDRESS_PROOF").getByTestId("kyc-slot-done")).toBeVisible({ timeout: 30_000 });
   await say(page, "One photo: the electricity bill. OCR runs on our own server; images never leave it.", 4500);
   await page.getByTestId("kyc-submit").click();
@@ -207,9 +207,16 @@ test("demo video", async ({ browser, request }) => {
   await page.getByTestId("track-link").click();
   await expect(page.getByTestId("next-sentence")).toBeVisible();
   await say(page, "The tracker says what happens next, with a date, so nobody has to call to ask.", 5000);
+  const staffLogin = await page.request.post(`${API}/backoffice/auth/login`, { data: { username: "ops", password: PASSWORD } });
+  const staffToken = ((await staffLogin.json()) as { token: string }).token;
+  const orderId = page.url().split("/").pop();
   for (const state of ["FEASIBILITY_CHECK", "INSTALL_SCHEDULED"] as const) {
-    await page.getByTestId("demo").getByRole("button", { name: `→ ${t.track.states[state]}` }).click();
-    await expect(page.getByTestId("order-state")).toHaveText(t.track.states[state]);
+    await say(page, `Staff post "${t.track.states[state]}" from the back office. The owner's tracker updates by itself.`, 1500);
+    await page.request.post(`${API}/backoffice/orders/${orderId}/fulfilment`, {
+      headers: { Authorization: `Bearer ${staffToken}` },
+      data: { state },
+    });
+    await expect(page.getByTestId("order-state")).toHaveText(t.track.states[state], { timeout: 15_000 });
   }
   const picker = page.getByTestId("visit-picker");
   await expect(picker).toBeVisible();

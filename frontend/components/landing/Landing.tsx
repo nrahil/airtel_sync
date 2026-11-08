@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { LanguagePicker } from "@/components/LanguagePicker";
+import { backofficeMessages } from "@/lib/backoffice-i18n";
 import { type Locale, type Messages, bcp47 } from "@/lib/i18n";
 
 /** The front door: what this is, one "Start" button, and the way back to an order. */
@@ -43,6 +44,13 @@ export function Landing({ locale, t }: { locale: Locale; t: Messages }) {
         <h2 className="text-sm font-medium text-neutral-600 dark:text-neutral-300">{l.language}</h2>
         <LanguagePicker current={locale} autoNote={l.autoPicked} />
       </section>
+      <Link
+        href={`/${locale}/backoffice`}
+        data-testid="staff-sign-in"
+        className="flex h-11 items-center justify-center self-center rounded-xl px-4 text-sm font-medium ring-1 ring-neutral-300 dark:ring-neutral-600"
+      >
+        {backofficeMessages(locale).signIn}
+      </Link>
     </main>
   );
 }

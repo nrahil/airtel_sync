@@ -497,11 +497,6 @@ export function cancelOrder(orderId: string): Promise<Order> {
   return call("POST", `/api/v1/orders/${enc(orderId)}/cancel`, undefined, { auth: true });
 }
 
-/** Demo only: stands in for operations moving the install forward. */
-export function simulateFulfilment(orderId: string, state: OrderState): Promise<Order> {
-  return call("POST", `/api/v1/orders/${enc(orderId)}/fulfilment`, { state }, { auth: true });
-}
-
 export function payOrder(
   orderId: string,
   method: PaymentMethod,

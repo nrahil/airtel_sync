@@ -9,8 +9,11 @@ Rules worth repeating:
 * Only a checksum-valid GSTIN that is in the registry is accepted; a repair of OCR
   confusables is accepted only with both, and is disclosed (D2, D3).
 * Unknown identifiers are ``NOT_FOUND`` — never auto-passed (D4).
-* Udyam registration date / major activity differences are WARN only (D11): they
-  differ in almost every specimen.
+* Everything printed is compared with the registry: GST address and date, and the
+  Udyam name, city, state, registration date and major activity. A difference sends
+  the case to a person; it is not proof of anything. A value OCR could not read is
+  "unreadable", never a mismatch.
+* Addresses must have the same numbers (unit, pincode) as well as mostly the same words.
 * There is **no** pincode↔state check — the pincodes are synthetic (D13, KG-15).
 * A PASS backed by an OCR field below :data:`CONFIDENCE_THRESHOLD` becomes REVIEW.
 """
@@ -39,7 +42,7 @@ from app.kyc.validators import (
     IdResolution,
     IdStatus,
     address_proof_cutoff,
-    address_similarity,
+    addresses_match,
     business_names_match,
     is_address_proof_fresh,
     is_id_valid,
@@ -351,6 +354,31 @@ class _Evaluator:
                 slot=slot,
                 confidence=conf,
             )
+        got = self.field(doc, "address")
+        if got is not None:
+            text, conf = got
+            ok, similarity = addresses_match(
+                text, record.principal_place_of_business, ADDRESS_SIMILARITY_MIN
+            )
+            self.out.add(
+                "gst.address",
+                CheckStatus.PASS if ok else CheckStatus.REVIEW,
+                None if ok else KycReason.GST_ADDRESS_MISMATCH,
+                slot=slot,
+                confidence=conf,
+                params={"similarity": round(similarity, 2)},
+            )
+        got = self.field(doc, "date_of_liability")
+        if got is not None:
+            text, conf = got
+            ok = parse_date(text) == record.registration_date
+            self.out.add(
+                "gst.date",
+                CheckStatus.PASS if ok else CheckStatus.REVIEW,
+                None if ok else KycReason.GST_DATE_MISMATCH,
+                slot=slot,
+                confidence=conf,
+            )
 
     def _name_vs_registry(
         self, doc: Extraction, key: str, registry_value: str, reason: KycReason, *, strict: bool
@@ -383,13 +411,20 @@ class _Evaluator:
         if doc is None:
             return
         on_record = self.ctx.udyam_on_record
-        if not doc.identifier_reads:
-            # Certificate present but number blank (K01) — reject the document (D5).
+        if not doc.identifier_reads and "udyam_number" not in doc.fields:
+            # The number's label could not be found at all: unreadable, not blank.
             self.out.add(
                 "udyam.number",
-                CheckStatus.FAIL if on_record else CheckStatus.WARN,
-                KycReason.UDYAM_NUMBER_MISSING,
+                CheckStatus.ACTION,
+                KycReason.FIELD_UNREADABLE,
                 slot=slot,
+                params={"field": "udyam_number"},
+            )
+            return
+        if not doc.identifier_reads:
+            # Certificate present but number blank (K01): nothing to verify it against.
+            self.out.add(
+                "udyam.number", CheckStatus.REVIEW, KycReason.UDYAM_NUMBER_MISSING, slot=slot
             )
             return
         reg = self.registries(slot, "udyam.registry")
@@ -454,24 +489,58 @@ class _Evaluator:
             )
         if doc.source is not Source.OCR:
             return
-        name = doc.fields.get("enterprise_name")
-        if name is not None and name.text:
-            ok = business_names_match(name.text, record.enterprise_name)
+        got = self.field(doc, "enterprise_name")
+        if got is not None:
+            text, conf = got
+            ok = business_names_match(text, record.enterprise_name)
             self.out.add(
                 "udyam.enterprise_name",
                 CheckStatus.PASS if ok else CheckStatus.REVIEW,
                 None if ok else KycReason.UDYAM_NAME_MISMATCH,
                 slot=slot,
-                confidence=name.confidence,
+                confidence=conf,
             )
-        # Systematic noise in the specimens: warn, never block (D11, KG-13).
-        reg_date = doc.fields.get("date_of_registration")
-        if reg_date is not None and parse_date(reg_date.text) != record.date_of_registration:
-            self.out.add("udyam.date", CheckStatus.WARN, KycReason.UDYAM_DATE_MISMATCH, slot=slot)
-        activity = doc.fields.get("major_activity")
-        if activity is not None and not names_match(activity.text, record.major_activity.value):
+        city, state = self.field(doc, "city"), self.field(doc, "state")
+        if city is not None and state is not None:
+            ok = names_match(city[0], record.city) and names_match(state[0], record.state)
             self.out.add(
-                "udyam.activity", CheckStatus.WARN, KycReason.UDYAM_ACTIVITY_MISMATCH, slot=slot
+                "udyam.location",
+                CheckStatus.PASS if ok else CheckStatus.REVIEW,
+                None if ok else KycReason.UDYAM_LOCATION_MISMATCH,
+                slot=slot,
+                confidence=min(city[1], state[1]),
+            )
+        got = self.field(doc, "date_of_registration")
+        if got is not None:
+            text, conf = got
+            printed = parse_date(text)
+            if printed is None:
+                self.out.add(
+                    "udyam.date_of_registration",
+                    CheckStatus.ACTION,
+                    KycReason.FIELD_UNREADABLE,
+                    slot=slot,
+                    params={"field": "date_of_registration"},
+                )
+            else:
+                ok = printed == record.date_of_registration
+                self.out.add(
+                    "udyam.date",
+                    CheckStatus.PASS if ok else CheckStatus.REVIEW,
+                    None if ok else KycReason.UDYAM_DATE_MISMATCH,
+                    slot=slot,
+                    confidence=conf,
+                )
+        got = self.field(doc, "major_activity")
+        if got is not None:
+            text, conf = got
+            ok = names_match(text, record.major_activity.value)
+            self.out.add(
+                "udyam.activity",
+                CheckStatus.PASS if ok else CheckStatus.REVIEW,
+                None if ok else KycReason.UDYAM_ACTIVITY_MISMATCH,
+                slot=slot,
+                confidence=conf,
             )
 
     # -------------------------------------------------------------- signatory ID
@@ -589,8 +658,7 @@ class _Evaluator:
         got = self.field(doc, "supply_address")
         if got is not None and reference:
             text, conf = got
-            similarity = address_similarity(text, reference)
-            ok = similarity >= ADDRESS_SIMILARITY_MIN
+            ok, similarity = addresses_match(text, reference, ADDRESS_SIMILARITY_MIN)
             self.out.add(
                 "address.matches_gst",
                 CheckStatus.PASS if ok else CheckStatus.REVIEW,

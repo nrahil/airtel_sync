@@ -556,6 +556,49 @@ def test_sla_breaches_listed_for_ops_and_admin_fulfils(client: TestClient) -> No
     assert bad.json()["detail"]["code"] == "ILLEGAL_TRANSITION"
 
 
+def test_ops_posts_each_step_and_the_owner_sees_it(client: TestClient) -> None:
+    ops = staff(client, "ops", StaffRole.OPS)
+    sales = staff(client, "sales", StaffRole.SALES)
+    customer = checkout_user(client)
+    order = place(client, customer, new_quote(client, quoted_session(client))["quote_id"], key())
+    order_id = order.json()["order_id"]
+    board_url, url = f"{BO}/orders", f"{BO}/orders/{order_id}/fulfilment"
+
+    # Not on the board until it is paid; then the next step is offered.
+    assert client.get(board_url, headers=ops).json()["orders"] == []
+    kyc_passed(client, customer)
+    assert pay(client, customer, order_id, key(), simulate="success").status_code == 201
+    row = client.get(board_url, headers=ops).json()["orders"][0]
+    assert (row["order_id"], row["next_steps"]) == (order_id, ["FEASIBILITY_CHECK"])
+    assert not {"principal_token", "phone"} & set(row)
+
+    # Other roles and customers cannot use it; ops cannot read leads.
+    assert client.get(board_url, headers=sales).status_code == 403
+    assert client.post(url, json={"state": "FEASIBILITY_CHECK"}, headers=sales).status_code == 403
+    assert client.get(board_url, headers=customer).status_code == 401
+    assert (
+        client.post(url, json={"state": "FEASIBILITY_CHECK"}, headers=customer).status_code == 401
+    )
+    assert client.get(f"{BO}/leads", headers=ops).status_code == 403
+
+    tracker = f"/api/v1/orders/{order_id}"
+    for state, offered in (
+        ("FEASIBILITY_CHECK", ["INSTALL_SCHEDULED", "NOT_FEASIBLE"]),
+        ("INSTALL_SCHEDULED", ["INSTALLED"]),
+        ("INSTALLED", ["ACTIVATED"]),
+        ("ACTIVATED", []),
+    ):
+        assert client.post(url, json={"state": state}, headers=ops).status_code == 200
+        seen = client.get(tracker, headers=customer).json()
+        assert seen["state"] == state
+        assert seen["tracker"]["history"][-1]["state"] == state
+        assert client.get(board_url, headers=ops).json()["orders"][0]["next_steps"] == offered
+
+    # A second person posting the same step from a stale screen changes nothing.
+    assert client.post(url, json={"state": "ACTIVATED"}, headers=ops).status_code == 409
+    assert audit_rows(client, "ORDER_STATE")[-1].actor.startswith("staff:s_")
+
+
 def test_model_endpoint_reports_holdout_metrics(client: TestClient) -> None:
     admin = staff(client, "admin", StaffRole.ADMIN)
     body = client.get(f"{BO}/model", headers=admin).json()

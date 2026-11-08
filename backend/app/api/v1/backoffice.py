@@ -7,7 +7,9 @@
 * ``POST /assignments`` — give a lead / session to a partner firm (``sales``, ``admin``).
 * ``POST /calls`` — log how a call went (audited; partners only for their own leads).
 * ``GET /review-queue`` · ``POST /review/{item_id}`` — KYC review and hand-offs (J7).
-* ``GET /sla-breaches`` · ``POST /orders/{id}/fulfilment`` (``admin``).
+* ``GET /orders`` — paid orders being installed, with the steps staff may post next.
+* ``GET /sla-breaches`` · ``POST /orders/{id}/fulfilment`` (``ops``, ``admin``): the only
+  way an order moves through installation; the owner's tracker shows each step.
 * ``POST /reveal`` — open masked PII with a reason; audited (AC-04). ``no-store``.
 
 Staff tokens are a different format and key from customer tokens, so neither can be
@@ -266,6 +268,14 @@ def decide(
 
 
 # ------------------------------------------------------------------ orders
+
+
+@router.get("/orders")
+def order_board(staff: StaffDep, service: Service, db: Db, clock: ClockDep) -> dict[str, Any]:
+    try:
+        return service.order_board(db, clock, staff)
+    except BackofficeError as exc:
+        raise _fail(exc) from None
 
 
 @router.get("/sla-breaches")

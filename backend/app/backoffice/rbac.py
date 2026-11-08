@@ -25,6 +25,7 @@ class Perm(StrEnum):
     HANDOFF_READ = "handoff:read"  # 3-failure warm hand-offs (J7)
     HANDOFF_RESOLVE = "handoff:resolve"
     SLA_READ = "sla:read"
+    ORDERS_READ = "orders:read"  # the board of paid orders being installed
     ORDERS_FULFIL = "orders:fulfil"  # feasibility → install → activation
     MODEL_READ = "model:read"
 
@@ -45,11 +46,13 @@ _PARTNER: Final = frozenset({Perm.LEADS_READ, Perm.REVEAL_LEAD, Perm.REVEAL_CONT
 _REVIEWER: Final = frozenset(
     {Perm.REVIEW_READ, Perm.REVIEW_DECIDE, Perm.HANDOFF_READ, Perm.HANDOFF_RESOLVE, Perm.REVEAL_KYC}
 )
+_OPS: Final = frozenset({Perm.ORDERS_READ, Perm.ORDERS_FULFIL, Perm.SLA_READ, Perm.REVEAL_CONTACT})
 
 PERMISSIONS: Final[Mapping[StaffRole, frozenset[Perm]]] = {
     StaffRole.SALES: _SALES,
     StaffRole.PARTNER: _PARTNER,
     StaffRole.KYC_REVIEWER: _REVIEWER,
+    StaffRole.OPS: _OPS,
     StaffRole.ADMIN: frozenset(Perm),
 }
 if set(PERMISSIONS) != set(StaffRole):  # a new role must be granted explicitly

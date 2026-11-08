@@ -188,6 +188,7 @@ class StaffRole(StrEnum):
     SALES = "sales"
     PARTNER = "partner"
     KYC_REVIEWER = "kyc_reviewer"
+    OPS = "ops"  # field operations: post each installation step
     ADMIN = "admin"
 
 

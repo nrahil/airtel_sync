@@ -23,7 +23,7 @@ type Slot = keyof typeof SLOTS;
 
 /** What each applicant declares "on record" (tests/fixtures/kyc/specimens.json). */
 const ON_RECORD = {
-  K03: { name: "Joseph Singh", gstin: "27XUIXG0767D1ZP", udyam: "UDYAM-MH-00-9516696" },
+  C01: { name: "Joseph Singh", gstin: "27XUIXG0767D1ZP", udyam: "UDYAM-MH-00-9516696" },
   K06: { name: "Pooja Shah", gstin: "08YKZXS5189L1ZO", udyam: "UDYAM-RJ-00-6577157" },
   K11: { name: "Vikram Pillai", gstin: "03KGZXT1320R1ZZ", udyam: "UDYAM-PB-00-9719478" },
 } as const;
@@ -89,7 +89,7 @@ async function kycOnly(page: Page, t: T, locale: string) {
   await page.goto(`/${locale}/kyc`);
 }
 
-test("E2E-01/03/04: Hindi advisor → plan → P03 blocked → dependency cascade → consent → K03 PASS → pay → track → live", async ({ page }) => {
+test("E2E-01/03/04: Hindi advisor → plan → P03 blocked → dependency cascade → consent → C01 PASS → pay → track → live", async ({ page }) => {
   const t = hi;
   await page.goto("/hi/advisor");
   await answerAdvisor(page, t, "मेरी सूरत में किराने की दुकान है");
@@ -134,15 +134,15 @@ test("E2E-01/03/04: Hindi advisor → plan → P03 blocked → dependency cascad
   await expect(page.getByTestId("order")).toContainText(t.checkout.orderPlaced);
   await expect(page.getByTestId("order")).toContainText(t.checkout.kycNext);
 
-  // Smart KYC with the real OCR pipeline: K03 is the clean applicant.
+  // Smart KYC with the real OCR pipeline: C01 is the clean applicant.
   await page.getByTestId("kyc-link").click();
   await expect(page).toHaveURL(/\/hi\/kyc\?o=/);
-  await startKyc(page, t, "K03");
+  await startKyc(page, t, "C01");
   const verdict = page.getByTestId("kyc-verdict");
   await expect(verdict).toHaveAttribute("data-decision", "PASS", { timeout: 90_000 });
   await expect(verdict).toContainText(t.kyc.status.PASS);
   // Identifiers are never echoed back in the clear.
-  await expect(page.locator("main")).not.toContainText(ON_RECORD.K03.gstin);
+  await expect(page.locator("main")).not.toContainText(ON_RECORD.C01.gstin);
 
   // Pay (setup + first month), then track.
   await page.getByTestId("kyc-to-payment").click();
@@ -161,11 +161,22 @@ test("E2E-01/03/04: Hindi advisor → plan → P03 blocked → dependency cascad
   await expect(page.getByTestId("order-eta")).toBeVisible();
   await expect(page.getByTestId("notifications")).toBeVisible();
 
-  // Operations (demo control) move the install forward to activation.
+  // Staff post each step from the back office; the owner's open tracker follows by itself.
+  const orderId = page.url().split("/").pop()!;
+  const staff = await page.context().newPage();
+  await staff.goto("/en/backoffice");
+  await staff.getByLabel("Username").fill("ops");
+  await staff.getByLabel("Password").fill(process.env.BACKOFFICE_DEMO_PASSWORD ?? "demo-password-2026"); // gitleaks:allow (demo users)
+  await staff.getByRole("button", { name: "Sign in" }).click();
+  const staffCard = staff.locator(`[data-order-id="${orderId}"]`);
   for (const state of ["FEASIBILITY_CHECK", "INSTALL_SCHEDULED", "INSTALLED", "ACTIVATED"] as const) {
-    await page.getByTestId("demo").getByRole("button", { name: `→ ${t.track.states[state]}` }).click();
-    await expect(page.getByTestId("order-state")).toHaveText(t.track.states[state]);
+    await staffCard.getByTestId(`post-${state}`).click();
+    await expect(staffCard).toHaveAttribute("data-state", state);
+    await page.bringToFront(); // a hidden tab doesn't poll
+    await expect(page.getByTestId("order-state")).toHaveText(t.track.states[state], { timeout: 15_000 });
+    await staff.bringToFront();
   }
+  await page.bringToFront();
   await expect(page.getByTestId("next-sentence")).toHaveText(t.track.nextLive);
 });
 
@@ -174,18 +185,18 @@ test("E2E-02: K11 stale electricity bill → precise fix naming the cut-off date
   await kycOnly(page, t, "en");
   await startKyc(page, t, "K11");
   const verdict = page.getByTestId("kyc-verdict");
-  await expect(verdict).toHaveAttribute("data-decision", "FAIL", { timeout: 90_000 });
+  await expect(verdict).toHaveAttribute("data-decision", "REVIEW", { timeout: 90_000 });
   const fix = page.getByTestId("kyc-slot-ADDRESS_PROOF").getByTestId("kyc-fixes");
   await expect(fix).toContainText("31 Oct 2025");
   await expect(fix).toContainText("Please upload a bill dated on or after 16 Apr 2026.");
   await expect(page.getByTestId("kyc-to-payment")).toHaveCount(0);
 });
 
-test("K06 (Hindi): altered GSTIN digit fails with a fix on the GST certificate", async ({ page }) => {
+test("K06 (Hindi): altered GSTIN digit goes to review with a fix on the GST certificate", async ({ page }) => {
   const t = hi;
   await kycOnly(page, t, "hi");
   await startKyc(page, t, "K06");
-  await expect(page.getByTestId("kyc-verdict")).toHaveAttribute("data-decision", "FAIL", { timeout: 90_000 });
+  await expect(page.getByTestId("kyc-verdict")).toHaveAttribute("data-decision", "REVIEW", { timeout: 90_000 });
   const gst = page.getByTestId("kyc-slot-GST_CERTIFICATE");
   await expect(gst.getByTestId("kyc-fixes")).not.toBeEmpty();
   await expect(page.locator("main")).not.toContainText(ON_RECORD.K06.gstin);

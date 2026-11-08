@@ -71,7 +71,7 @@ cd backend && python -m scripts.e2e_server --port 8000 --origin http://localhost
 cd frontend && npm run build && npm start
 ```
 
-Staff console: `/en/backoffice`, users `sales`, `partner`, `reviewer` and `admin`, password `demo-password-2026` (or `BACKOFFICE_DEMO_PASSWORD`). For a persistent database, create staff with `python -m scripts.create_staff`. The 3-minute walkthrough is in [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
+Staff console: `/en/backoffice`, users `sales`, `partner`, `reviewer`, `ops` and `admin`, password `demo-password-2026` (or `BACKOFFICE_DEMO_PASSWORD`). Sign in as `ops` and use the **Orders** tab to post each installation step; the owner's open tracker updates within about 10 seconds. For a persistent database, create staff with `python -m scripts.create_staff`. The 3-minute walkthrough is in [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 
 **Docker:** `docker compose up --build` serves the backend on :8000 and the PWA on :3000, with `mock_data` mounted read-only.
 
@@ -80,10 +80,14 @@ Staff console: `/en/backoffice`, users `sales`, `partner`, `reviewer` and `admin
 ## Test
 
 ```bash
-# backend: lint, types, ~1,070 tests (unit, property, golden OCR over the 12 specimens, API, security)
+# backend: lint, types, ~1,600 tests (unit, property, golden OCR over the 12 specimens, API, security)
 cd backend
 ruff check . && ruff format --check . && mypy
 pytest
+
+# KYC on documents it has never seen: fresh applicants from the registries, 29 planted
+# problems, four typefaces, phone-photo damage, real Tesseract. Results: docs/KYC_ACCURACY.md
+python -m scripts.kyc_stress --per-case 3 --photo        # ~25 min; exits 1 on any false pass
 
 # frontend: lint, types, build, Playwright on a Pixel 7 viewport against a mocked API
 cd frontend
@@ -97,7 +101,7 @@ npm run test:e2e:live            # E2E_VIDEO=1 records a video of each journey
 
 | Test ID | What | Where |
 |---|---|---|
-| E2E-01 | Hindi advisor → plan → toggle → consent → K03 upload → PASS → pay → track → live | `frontend/e2e-live`, `backend/tests/api/test_e2e_journeys.py`, `frontend/e2e/kyc.spec.ts` |
+| E2E-01 | Hindi advisor → plan → toggle → consent → C01 upload → PASS → pay → track → live | `frontend/e2e-live`, `backend/tests/api/test_e2e_journeys.py`, `frontend/e2e/kyc.spec.ts` |
 | E2E-02 | K11 → precise stale-bill fix | same three files |
 | E2E-03 | Tier-2 owner: Biz Fibre 1G blocked, Biz Fibre 300 offered | `e2e-live`, `e2e/quote.spec.ts`, `test_checkout.py` |
 | E2E-04 | Remove fibre while CCTV is selected → cascade + one-tap fix | `e2e-live`, `e2e/quote.spec.ts`, `test_checkout.py` |

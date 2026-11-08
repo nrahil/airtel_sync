@@ -123,7 +123,7 @@ def test_create_staff_demo_seed(
         users = {u.username: u for u in s.scalars(select(StaffUser))}
         assigned = list(s.scalars(select(LeadAssignment)))
     engine.dispose()
-    assert set(users) == {"sales", "partner", "reviewer", "admin"}
+    assert set(users) == {"sales", "partner", "reviewer", "ops", "admin"}
     assert users["partner"].partner_id == "PARTNER-DEMO"
     assert [a.lead_ref for a in assigned] == ["L00005"]  # the fixture's channel-partner lead
 

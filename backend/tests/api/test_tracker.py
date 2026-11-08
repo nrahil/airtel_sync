@@ -16,6 +16,7 @@ from pydantic import SecretStr
 from sqlalchemy import select, text
 
 from app.audit.log import AuditLog
+from app.backoffice.staff import create_staff
 from app.config import get_clock
 from app.db.models import (
     KycApplication,
@@ -23,6 +24,8 @@ from app.db.models import (
     NotificationChannel,
     OrderNotification,
     PrincipalIdentity,
+    StaffRole,
+    StaffUser,
 )
 from tests.api.test_checkout import (
     ORDERS,
@@ -45,6 +48,7 @@ from tests.api.test_checkout import (
 from tests.kyc_helpers import MakeApp
 
 PHONE = "98765 43210"
+BO = "/api/v1/backoffice"
 
 
 @pytest.fixture
@@ -67,8 +71,31 @@ def get(client: TestClient, headers: dict[str, str], order_id: str) -> Any:
     return client.get(f"{ORDERS}/{order_id}", headers=headers)
 
 
+def _ops_headers(client: TestClient) -> dict[str, str]:
+    """One signed-in ``ops`` user per app (staff logins are slow and rate limited)."""
+    app: Any = client.app
+    with app.state.sessionmaker() as db:
+        if db.scalar(select(StaffUser.id).where(StaffUser.username == "ops-test")) is None:
+            create_staff(
+                db, get_clock(), username="ops-test", password="p" * 12, role=StaffRole.OPS
+            )
+            db.commit()
+    r = client.post(f"{BO}/auth/login", json={"username": "ops-test", "password": "p" * 12})
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['token']}"}
+
+
 def fulfil(client: TestClient, headers: dict[str, str], order_id: str, state: str) -> Any:
-    return client.post(f"{ORDERS}/{order_id}/fulfilment", json={"state": state}, headers=headers)
+    """Staff post the step; on success, what the owner (``headers``) then sees."""
+    app: Any = client.app
+    if not hasattr(app.state, "test_ops_headers"):
+        app.state.test_ops_headers = _ops_headers(client)
+    url = f"{BO}/orders/{order_id}/fulfilment"
+    r = client.post(url, json={"state": state}, headers=app.state.test_ops_headers)
+    if r.status_code == 401:  # the test moved the clock past the token's life
+        app.state.test_ops_headers = _ops_headers(client)
+        r = client.post(url, json={"state": state}, headers=app.state.test_ops_headers)
+    return get(client, headers, order_id) if r.status_code == 200 else r
 
 
 def paid(client: TestClient) -> tuple[dict[str, str], dict[str, Any]]:
@@ -368,21 +395,25 @@ def test_ac_01_tracker_is_owner_only(client: TestClient) -> None:
     stranger = checkout_user(client)
     assert get(client, stranger, oid).status_code == 404
     assert client.post(f"{ORDERS}/{oid}/cancel", headers=stranger).status_code == 404
-    assert fulfil(client, stranger, oid, "FEASIBILITY_CHECK").status_code == 404
     assert client.get(f"{ORDERS}/{oid}").status_code == 401
     mine = client.get(ORDERS, headers=headers).json()["orders"]
     assert [o["order_id"] for o in mine] == [oid]
     assert client.get(ORDERS, headers=stranger).json()["orders"] == []
 
 
-def test_fulfilment_endpoint_does_not_exist_in_production(make_kyc_app: MakeApp) -> None:
+def test_the_owner_cannot_move_their_own_order(client: TestClient) -> None:
+    headers, order = paid(client)
+    url = f"{ORDERS}/{order['order_id']}/fulfilment"
+    assert client.post(url, json={"state": "FEASIBILITY_CHECK"}, headers=headers).status_code == 404
+    assert get(client, headers, order["order_id"]).json()["state"] == "PAYMENT_CONFIRMED"
+
+
+def test_demo_controls_are_off_in_production(make_kyc_app: MakeApp) -> None:
     app = make_kyc_app(
         environment="production", today_override=None, quote_hmac_key=SecretStr("q" * 32)
     )
     with TestClient(app) as c:
         headers, order = ordered(c)
-        r = fulfil(c, headers, order["order_id"], "FEASIBILITY_CHECK")
-        assert r.status_code == 404
         assert get(c, headers, order["order_id"]).json()["tracker"]["can_simulate"] is False
 
 

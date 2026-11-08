@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from app.consent.notice import NOTICE_VERSION
 from app.kyc.types import DocSlot
+from tests.api.test_tracker import fulfil
 from tests.kyc_golden.conftest import GOLDEN, TESSERACT_BIN, requires_tesseract, specimen_path
 from tests.kyc_helpers import MakeApp
 
@@ -142,7 +143,7 @@ def test_e2e_01_hindi_journey_from_advisor_to_live_service(client: TestClient) -
     assert order["next_action"] == "KYC"
 
     # Smart KYC over the K03 specimens with real Tesseract → PASS; the order follows.
-    verdict = kyc(client, headers, "K03", "hi")
+    verdict = kyc(client, headers, "C01", "hi")
     assert verdict["status"] == "PASS", verdict["verdict"]
     order = ok(client.get(f"{ORDERS}/{order['order_id']}", headers=headers))
     assert order["state"] == "KYC_VERIFIED"
@@ -172,10 +173,7 @@ def test_e2e_01_hindi_journey_from_advisor_to_live_service(client: TestClient) -
     assert paid["payment"]["status"] == "SUCCEEDED"
     assert paid["payment"]["amount_paise"] == order["amount_due_now_paise"]
     for state in ("FEASIBILITY_CHECK", "INSTALL_SCHEDULED", "INSTALLED", "ACTIVATED"):
-        r = client.post(
-            f"{ORDERS}/{order['order_id']}/fulfilment", json={"state": state}, headers=headers
-        )
-        assert ok(r)["state"] == state
+        assert ok(fulfil(client, headers, order["order_id"], state))["state"] == state
     tracker = ok(client.get(f"{ORDERS}/{order['order_id']}", headers=headers))["tracker"]
     assert [h["state"] for h in tracker["history"]] == [
         "QUOTE_ACCEPTED",
@@ -195,7 +193,7 @@ def test_e2e_02_k11_stale_bill_gets_a_precise_hindi_fix_and_blocks_payment(
     headers = sign_in(client, "9811122244")
     consent(client, headers, "hi")
     verdict = kyc(client, headers, "K11", "hi")
-    assert verdict["status"] == "FAIL"
+    assert verdict["status"] == "REVIEW"
     fix = next(f for f in verdict["verdict"]["fixes"] if f["reason"] == "ADDRESS_PROOF_STALE")
     assert fix["slot"] == "ADDRESS_PROOF"
     assert "16 अप्रैल 2026" in fix["message"]
